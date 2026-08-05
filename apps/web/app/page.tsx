@@ -1,19 +1,104 @@
+import Link from "next/link"
 import { Button } from "@workspace/ui/components/button"
+import {
+  Package,
+  ShoppingCart,
+  Headphones,
+  TrendingUp,
+  Megaphone,
+  Truck,
+} from "lucide-react"
+
+const agents = [
+  { icon: Package, name: "Inventory" },
+  { icon: ShoppingCart, name: "Orders" },
+  { icon: Headphones, name: "Support" },
+  { icon: TrendingUp, name: "Pricing" },
+  { icon: Megaphone, name: "Marketing" },
+  { icon: Truck, name: "Logistics" },
+]
 
 export default function Page() {
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
+    <div className="flex min-h-svh flex-col justify-between px-6 py-6">
+      <div className="flex flex-1 flex-col items-center justify-center gap-6">
+        {/* Logo & Title */}
+        <div className="flex items-center gap-2.5">
+          <svg
+            className="size-7"
+            viewBox="0 0 32 32"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <rect width="32" height="32" rx="8" className="fill-foreground" />
+            <path
+              d="M8 12L16 8L24 12V20L16 24L8 20V12Z"
+              className="fill-background"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+            <circle cx="16" cy="16" r="3" className="fill-foreground" />
+          </svg>
+          <h1 className="text-xl font-bold tracking-tight">TruCart</h1>
         </div>
-        <div className="text-muted-foreground font-mono text-xs">
-          (Press <kbd>d</kbd> to toggle dark mode)
+
+        {/* Tagline */}
+        <p className="text-muted-foreground max-w-md text-center text-sm leading-relaxed">
+          AI-powered e-commerce operations. Six autonomous agents manage
+          inventory, orders, support, pricing, marketing, and logistics.
+        </p>
+
+        {/* Buttons */}
+        <div className="flex gap-2.5">
+          <Link href="/login">
+            <Button
+              size="default"
+              variant="outline"
+              className="border border-black px-6 text-xs font-semibold text-black hover:bg-black hover:text-white dark:border-white dark:text-white dark:hover:bg-white dark:hover:text-black"
+            >
+              Login
+            </Button>
+          </Link>
         </div>
+
+        {/* Agent Badges */}
+        <div className="flex flex-wrap justify-center gap-2">
+          {agents.map((agent) => (
+            <div
+              key={agent.name}
+              className="bg-muted/60 flex items-center gap-1.5 rounded-full px-2.5 py-1"
+            >
+              <agent.icon className="size-3" />
+              <span className="text-[10px] font-medium">{agent.name}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Dark mode hint */}
+        <p className="text-muted-foreground font-mono text-[10px]">
+          press{" "}
+          <kbd className="rounded border bg-muted px-1 py-0.5 text-[9px]">
+            d
+          </kbd>{" "}
+          for dark mode
+        </p>
       </div>
+
+      {/* Footer */}
+      <footer className="flex items-center justify-between">
+        <p className="text-muted-foreground text-[12px]">
+          Bhautik Vaghamshi &amp; Daksh Patel
+        </p>
+
+        <a
+          href="https://github.com/your-repo/trucart"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-muted-foreground hover:text-foreground text-[12px] transition-colors"
+        >
+          GitHub
+        </a>
+      </footer>
     </div>
   )
 }
