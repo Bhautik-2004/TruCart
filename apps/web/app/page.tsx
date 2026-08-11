@@ -24,21 +24,7 @@ export default function Page() {
       <div className="flex flex-1 flex-col items-center justify-center gap-6">
         {/* Logo & Title */}
         <div className="flex items-center gap-2.5">
-          <svg
-            className="size-7"
-            viewBox="0 0 32 32"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <rect width="32" height="32" rx="8" className="fill-foreground" />
-            <path
-              d="M8 12L16 8L24 12V20L16 24L8 20V12Z"
-              className="fill-background"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-            <circle cx="16" cy="16" r="3" className="fill-foreground" />
-          </svg>
+          <Package className="size-7" />
           <h1 className="text-xl font-bold tracking-tight">TruCart</h1>
         </div>
 
