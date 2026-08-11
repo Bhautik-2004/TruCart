@@ -36,7 +36,9 @@ export function LoginForm({
         return
       }
 
-      window.location.assign("/")
+      const data = await res.json()
+      localStorage.setItem("user", JSON.stringify(data.user))
+      window.location.assign("/dashboard")
     } catch {
       setError("Could not reach the server. Please try again.")
     } finally {

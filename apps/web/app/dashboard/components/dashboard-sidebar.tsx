@@ -100,7 +100,12 @@ export function DashboardSidebar(props: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton render={<a href="/login" />}>
+            <SidebarMenuButton
+              onClick={() => {
+                localStorage.removeItem("user")
+                window.location.href = "/login"
+              }}
+            >
               <LogOut />
               <span>Log out</span>
             </SidebarMenuButton>
