@@ -1,0 +1,21 @@
+﻿-- ============================================================================
+-- TruCart database seed injector
+--
+-- Generates 1,000 rows per table (except users: 1 row) for every table defined in
+-- database/migrations/001-005, preserving all foreign-key relationships.
+--
+-- Usage:
+--   1. Apply migrations 001 -> 006 first.
+--   2. Run this file in the Supabase SQL Editor (or `psql -f data_inject.sql`).
+--
+-- Idempotent: every statement uses ON CONFLICT ... DO NOTHING, so the file can
+-- be re-run safely. Seed rows already inserted by migration 005 are included
+-- verbatim (byte-for-byte identical) so the total per table is exactly 1,000.
+--
+-- Notes:
+--   * auth_user_id is left NULL (Supabase Auth linkage not part of seed data).
+--   * GENERATED ALWAYS columns are never written:
+--       inventory.quantity_available, order_items.total_price, purchase_orders.total_cost
+--   * knowledge_base.embedding is left NULL (an embedding model fills it at runtime).
+--   * Deterministic fixed UUIDs keep cross-references stable across runs.
+-- ============================================================================

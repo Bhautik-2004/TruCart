@@ -1,0 +1,5 @@
+# TruCart backend dependencies
+fastapi
+uvicorn[standard]
+supabase
+python-dotenv
