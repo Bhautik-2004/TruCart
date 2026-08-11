@@ -77,7 +77,7 @@ export default function Page() {
         </p>
 
         <a
-          href="https://github.com/your-repo/trucart"
+          href="https://github.com/Bhautik-2004/TruCart"
           target="_blank"
           rel="noopener noreferrer"
           className="text-muted-foreground hover:text-foreground text-[12px] transition-colors"

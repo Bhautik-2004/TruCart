@@ -28,6 +28,7 @@ import {
   ListMinus,
   Logs
 } from "lucide-react"
+import { LogoutButton } from "./logout-button"
 
 const navItems = [
   {
@@ -98,15 +99,7 @@ export function DashboardSidebar(props: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              onClick={() => {
-                localStorage.removeItem("user")
-                window.location.href = "/login"
-              }}
-            >
-              <LogOut />
-              <span>Log out</span>
-            </SidebarMenuButton>
+            <LogoutButton />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
