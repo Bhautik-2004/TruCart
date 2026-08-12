@@ -15,29 +15,61 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react"
+import { createServerClient } from "../../../lib/supabase-server"
 
-const inventoryStats = [
-  { title: "Total Products", value: "12,234", icon: Package, change: "+19% this month" },
-  { title: "Low Stock Alerts", value: "23", icon: AlertTriangle, change: "5 critical" },
-  { title: "Stock In (Today)", value: "1,420", icon: TrendingUp, change: "340 units pending" },
-  { title: "Stock Out (Today)", value: "380", icon: TrendingDown, change: "28 products" },
-]
+export const dynamic = "force-dynamic"
 
-const inventoryItems = [
-  { sku: "SKU-001", name: "Wireless Bluetooth Headphones", category: "Electronics", stock: 245, minStock: 50, price: "$79.99", status: "in_stock" },
-  { sku: "SKU-002", name: "Organic Cotton T-Shirt", category: "Apparel", stock: 12, minStock: 30, price: "$29.99", status: "low_stock" },
-  { sku: "SKU-003", name: "Stainless Steel Water Bottle", category: "Accessories", stock: 890, minStock: 100, price: "$24.99", status: "in_stock" },
-  { sku: "SKU-004", name: "Laptop Stand Adjustable", category: "Electronics", stock: 0, minStock: 20, price: "$49.99", status: "out_of_stock" },
-  { sku: "SKU-005", name: "Bamboo Cutting Board Set", category: "Home", stock: 156, minStock: 40, price: "$34.99", status: "in_stock" },
-]
+export default async function InventoryPage() {
+  const supabase = createServerClient()
 
-const statusStyles: Record<string, string> = {
-  in_stock: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  low_stock: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  out_of_stock: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-}
+  const [productsResult, inventoryResult] = await Promise.all([
+    supabase.from("products").select("product_id, sku, name, category, current_price, status"),
+    supabase.from("inventory").select("inventory_id, product_id, quantity_on_hand, reorder_point, quantity_reserved, last_restock_date, updated_at"),
+  ])
 
-export default function InventoryPage() {
+  const products = productsResult.data || []
+  const inventory = inventoryResult.data || []
+
+  const totalProducts = products.length
+  const lowStockItems = inventory.filter(i => i.quantity_on_hand <= i.reorder_point)
+  const lowStockCount = lowStockItems.length
+
+  const today = new Date().toISOString().split("T")[0]
+  const restockedToday = inventory.filter(i => i.last_restock_date === today)
+  const stockInToday = restockedToday.reduce((sum, i) => sum + i.quantity_on_hand, 0)
+
+  const productsWithInventory = inventory.map(inv => {
+    const product = products.find(p => p.product_id === inv.product_id)
+    let status = "in_stock"
+    if (inv.quantity_on_hand <= 0) status = "out_of_stock"
+    else if (inv.quantity_on_hand <= inv.reorder_point) status = "low_stock"
+
+    return {
+      inventoryId: inv.inventory_id,
+      sku: product?.sku || "N/A",
+      name: product?.name || "Unknown",
+      category: product?.category || "N/A",
+      stock: inv.quantity_on_hand,
+      minStock: inv.reorder_point,
+      reserved: inv.quantity_reserved,
+      price: product?.current_price || 0,
+      status,
+    }
+  }).sort((a, b) => a.stock - b.stock)
+
+  const inventoryStats = [
+    { title: "Total Products", value: totalProducts.toLocaleString(), icon: Package, change: `${lowStockCount} low stock` },
+    { title: "Low Stock Alerts", value: lowStockCount.toString(), icon: AlertTriangle, change: `${lowStockItems.filter(i => i.quantity_on_hand === 0).length} critical` },
+    { title: "Stock In (Today)", value: stockInToday.toLocaleString(), icon: TrendingUp, change: `${restockedToday.length} products restocked` },
+    { title: "Stock Out (Today)", value: inventory.filter(i => i.quantity_on_hand === 0).length.toString(), icon: TrendingDown, change: "needs attention" },
+  ]
+
+  const statusStyles: Record<string, string> = {
+    in_stock: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+    low_stock: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+    out_of_stock: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -105,14 +137,14 @@ export default function InventoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {inventoryItems.map((item) => (
-                  <tr key={item.sku} className="border-b last:border-0">
+                {productsWithInventory.map((item) => (
+                  <tr key={item.inventoryId} className="border-b last:border-0">
                     <td className="py-3 font-medium">{item.sku}</td>
                     <td className="py-3">{item.name}</td>
                     <td className="py-3 text-muted-foreground">{item.category}</td>
                     <td className="py-3 font-medium">{item.stock}</td>
                     <td className="py-3 text-muted-foreground">{item.minStock}</td>
-                    <td className="py-3">{item.price}</td>
+                    <td className="py-3">₹{item.price.toFixed(2)}</td>
                     <td className="py-3">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[item.status]}`}>
                         {item.status.replace(/_/g, " ")}

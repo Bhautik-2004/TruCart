@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Card,
   CardContent,
@@ -19,82 +19,69 @@ import {
   ExternalLink,
 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
+import { supabase } from "../../../lib/supabase"
 
-const marketingStats = [
-  { title: "Active Campaigns", value: "8", icon: Megaphone, change: "3 scheduled" },
-  { title: "Total Impressions", value: "1.2M", icon: Eye, change: "+23% this week" },
-  { title: "Click-through Rate", value: "3.8%", icon: MousePointerClick, change: "+0.5% from avg" },
-  { title: "Conversions", value: "2,847", icon: TrendingUp, change: "$12,450 revenue" },
-]
-
-const campaigns = [
-  {
-    name: "Summer Sale 2024",
-    type: "Email",
-    status: "active",
-    sent: "15,234",
-    opened: "8,456",
-    clicked: "1,234",
-    conversions: 89,
-    budget: "$5,000",
-    spent: "$3,200",
-    startDate: "Jan 1, 2024",
-    endDate: "Jan 31, 2024",
-  },
-  {
-    name: "Product Launch - Wireless Earbuds",
-    type: "Social Media",
-    status: "active",
-    sent: "45,000",
-    opened: "12,345",
-    clicked: "3,456",
-    conversions: 156,
-    budget: "$10,000",
-    spent: "$7,800",
-    startDate: "Jan 5, 2024",
-    endDate: "Feb 5, 2024",
-  },
-  {
-    name: "Abandoned Cart Recovery",
-    type: "Email",
-    status: "active",
-    sent: "3,456",
-    opened: "2,100",
-    clicked: "890",
-    conversions: 67,
-    budget: "$1,000",
-    spent: "$450",
-    startDate: "Ongoing",
-    endDate: "Ongoing",
-  },
-  {
-    name: "VIP Customer Appreciation",
-    type: "Email",
-    status: "scheduled",
-    sent: "-",
-    opened: "-",
-    clicked: "-",
-    conversions: 0,
-    budget: "$3,000",
-    spent: "$0",
-    startDate: "Feb 1, 2024",
-    endDate: "Feb 14, 2024",
-  },
-]
-
-const statusStyles: Record<string, string> = {
-  active: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  scheduled: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-  completed: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
+interface Campaign {
+  campaign_id: string
+  name: string
+  type: string
+  status: string
+  budget: number
+  spent: number
+  scheduled_at: string
+  sent_at: string
+  campaign_metrics?: {
+    recipients: number
+    opened: number
+    clicked: number
+    converted: number
+  }[]
 }
 
 export default function MarketingPage() {
-  const [selectedCampaign, setSelectedCampaign] = useState<(typeof campaigns)[number] | null>(null)
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
 
-  function openCampaign(campaign: (typeof campaigns)[number]) {
+  useEffect(() => {
+    async function fetchCampaigns() {
+      const { data } = await supabase
+        .from("campaigns")
+        .select("*, campaign_metrics(recipients, opened, clicked, converted)")
+        .order("created_at", { ascending: false })
+        .limit(20)
+
+      setCampaigns(data || [])
+      setLoading(false)
+    }
+    fetchCampaigns()
+  }, [])
+
+  const activeCampaigns = campaigns.filter(c => c.status === "active").length
+  const totalRecipients = campaigns.reduce((sum, c) => sum + (c.campaign_metrics?.[0]?.recipients || 0), 0)
+  const totalClicked = campaigns.reduce((sum, c) => sum + (c.campaign_metrics?.[0]?.clicked || 0), 0)
+  const totalConverted = campaigns.reduce((sum, c) => sum + (c.campaign_metrics?.[0]?.converted || 0), 0)
+  const ctr = totalRecipients > 0 ? ((totalClicked / totalRecipients) * 100) : 0
+
+  const marketingStats = [
+    { title: "Active Campaigns", value: activeCampaigns.toString(), icon: Megaphone, change: `${campaigns.length} total` },
+    { title: "Total Impressions", value: totalRecipients.toLocaleString(), icon: Eye, change: "Across all campaigns" },
+    { title: "Click-through Rate", value: `${ctr.toFixed(1)}%`, icon: MousePointerClick, change: "Average CTR" },
+    { title: "Conversions", value: totalConverted.toLocaleString(), icon: TrendingUp, change: "Total conversions" },
+  ]
+
+  function openCampaign(campaign: Campaign) {
     setSelectedCampaign(campaign)
     setSheetOpen(true)
+  }
+
+  const statusStyles: Record<string, string> = {
+    active: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+    draft: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
+    scheduled: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+    completed: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
+    paused: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
   }
 
   return (
@@ -143,45 +130,56 @@ export default function MarketingPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="pb-2 text-left font-medium text-muted-foreground">Campaign</th>
-                  <th className="pb-2 text-left font-medium text-muted-foreground">Type</th>
-                  <th className="pb-2 text-left font-medium text-muted-foreground">Status</th>
-                  <th className="pb-2 text-left font-medium text-muted-foreground">Sent</th>
-                  <th className="pb-2 text-left font-medium text-muted-foreground">Opened</th>
-                  <th className="pb-2 text-left font-medium text-muted-foreground">Clicked</th>
-                  <th className="pb-2 text-left font-medium text-muted-foreground">Conversions</th>
-                  <th className="pb-2 text-right font-medium text-muted-foreground">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {campaigns.map((campaign) => (
-                  <tr key={campaign.name} className="border-b last:border-0">
-                    <td className="py-3 font-medium">{campaign.name}</td>
-                    <td className="py-3 text-muted-foreground">{campaign.type}</td>
-                    <td className="py-3">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[campaign.status]}`}>
-                        {campaign.status}
-                      </span>
-                    </td>
-                    <td className="py-3">{campaign.sent}</td>
-                    <td className="py-3">{campaign.opened}</td>
-                    <td className="py-3">{campaign.clicked}</td>
-                    <td className="py-3 font-medium">{campaign.conversions}</td>
-                    <td className="py-3 text-right">
-                      <Button variant="ghost" size="sm" onClick={() => openCampaign(campaign)}>
-                        View
-                        <ExternalLink className="ml-1 size-3" />
-                      </Button>
-                    </td>
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-12 bg-muted animate-pulse rounded" />
+              ))}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="pb-2 text-left font-medium text-muted-foreground">Campaign</th>
+                    <th className="pb-2 text-left font-medium text-muted-foreground">Type</th>
+                    <th className="pb-2 text-left font-medium text-muted-foreground">Status</th>
+                    <th className="pb-2 text-left font-medium text-muted-foreground">Sent</th>
+                    <th className="pb-2 text-left font-medium text-muted-foreground">Opened</th>
+                    <th className="pb-2 text-left font-medium text-muted-foreground">Clicked</th>
+                    <th className="pb-2 text-left font-medium text-muted-foreground">Conversions</th>
+                    <th className="pb-2 text-right font-medium text-muted-foreground">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {campaigns.map((campaign) => {
+                    const metrics = campaign.campaign_metrics?.[0]
+                    return (
+                      <tr key={campaign.campaign_id} className="border-b last:border-0">
+                        <td className="py-3 font-medium">{campaign.name}</td>
+                        <td className="py-3 text-muted-foreground">{campaign.type}</td>
+                        <td className="py-3">
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[campaign.status] || statusStyles.draft}`}>
+                            {campaign.status}
+                          </span>
+                        </td>
+                        <td className="py-3">{(metrics?.recipients || 0).toLocaleString()}</td>
+                        <td className="py-3">{(metrics?.opened || 0).toLocaleString()}</td>
+                        <td className="py-3">{(metrics?.clicked || 0).toLocaleString()}</td>
+                        <td className="py-3 font-medium">{metrics?.converted || 0}</td>
+                        <td className="py-3 text-right">
+                          <Button variant="ghost" size="sm" onClick={() => openCampaign(campaign)}>
+                            View
+                            <ExternalLink className="ml-1 size-3" />
+                          </Button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -195,14 +193,14 @@ export default function MarketingPage() {
             ? [
                 { label: "Status", value: selectedCampaign.status },
                 { label: "Type", value: selectedCampaign.type },
-                { label: "Sent", value: selectedCampaign.sent },
-                { label: "Opened", value: selectedCampaign.opened },
-                { label: "Clicked", value: selectedCampaign.clicked },
-                { label: "Conversions", value: `${selectedCampaign.conversions}` },
-                { label: "Budget", value: selectedCampaign.budget },
-                { label: "Spent", value: selectedCampaign.spent },
-                { label: "Start Date", value: selectedCampaign.startDate },
-                { label: "End Date", value: selectedCampaign.endDate },
+                { label: "Sent", value: (selectedCampaign.campaign_metrics?.[0]?.recipients || 0).toLocaleString() },
+                { label: "Opened", value: (selectedCampaign.campaign_metrics?.[0]?.opened || 0).toLocaleString() },
+                { label: "Clicked", value: (selectedCampaign.campaign_metrics?.[0]?.clicked || 0).toLocaleString() },
+                { label: "Conversions", value: `${selectedCampaign.campaign_metrics?.[0]?.converted || 0}` },
+                { label: "Budget", value: `₹${Number(selectedCampaign.budget).toFixed(2)}` },
+                { label: "Spent", value: `₹${Number(selectedCampaign.spent).toFixed(2)}` },
+                { label: "Start Date", value: selectedCampaign.scheduled_at ? new Date(selectedCampaign.scheduled_at).toLocaleDateString() : "N/A" },
+                { label: "End Date", value: selectedCampaign.sent_at ? new Date(selectedCampaign.sent_at).toLocaleDateString() : "Ongoing" },
               ]
             : []
         }

@@ -12,57 +12,86 @@ import {
   TrendingDown,
   Target,
   Sparkles,
-  ArrowRight,
 } from "lucide-react"
+import { createServerClient } from "../../../lib/supabase-server"
 
-const pricingStats = [
-  { title: "Avg Product Price", value: "$42.50", icon: DollarSign, change: "+$2.30 this week" },
-  { title: "Price Increases", value: "156", icon: TrendingUp, change: "Auto-adjusted" },
-  { title: "Price Decreases", value: "89", icon: TrendingDown, change: "Competitive matching" },
-  { title: "Price Alerts", value: "12", icon: Target, change: "3 critical" },
-]
+export const dynamic = "force-dynamic"
 
-const priceAdjustments = [
-  {
-    product: "Wireless Bluetooth Headphones",
-    sku: "SKU-001",
-    oldPrice: "$69.99",
-    newPrice: "$79.99",
-    change: "+14.3%",
-    reason: "Competitor price increase detected",
-    agent: "Pricing Agent",
-    timestamp: "5 min ago",
-  },
-  {
-    product: "Organic Cotton T-Shirt",
-    sku: "SKU-002",
-    oldPrice: "$34.99",
-    newPrice: "$29.99",
-    change: "-14.3%",
-    reason: "Low demand - dynamic pricing",
-    agent: "Pricing Agent",
-    timestamp: "15 min ago",
-  },
-  {
-    product: "Stainless Steel Water Bottle",
-    sku: "SKU-003",
-    oldPrice: "$24.99",
-    newPrice: "$27.99",
-    change: "+12.0%",
-    reason: "Supply chain cost increase",
-    agent: "Pricing Agent",
-    timestamp: "30 min ago",
-  },
-]
+export default async function PricingPage() {
+  const supabase = createServerClient()
 
-const competitorPrices = [
-  { product: "Wireless Headphones", ours: "$79.99", competitor1: "$84.99", competitor2: "$74.99", competitor3: "$79.99" },
-  { product: "Cotton T-Shirt", ours: "$29.99", competitor1: "$32.99", competitor2: "$27.99", competitor3: "$31.99" },
-  { product: "Water Bottle", ours: "$27.99", competitor1: "$29.99", competitor2: "$26.99", competitor3: "$28.99" },
-  { product: "Laptop Stand", ours: "$49.99", competitor1: "$54.99", competitor2: "$44.99", competitor3: "$52.99" },
-]
+  const [productsResult, priceHistoryResult, competitorResult] = await Promise.all([
+    supabase.from("products").select("product_id, sku, name, current_price, base_price, status"),
+    supabase.from("price_history").select("product_id, old_price, new_price, change_reason, changed_by, created_at").order("created_at", { ascending: false }).limit(20),
+    supabase.from("competitor_prices").select("product_id, competitor_name, competitor_price, detected_at").order("detected_at", { ascending: false }),
+  ])
 
-export default function PricingPage() {
+  const products = productsResult.data || []
+  const priceHistory = priceHistoryResult.data || []
+  const competitors = competitorResult.data || []
+
+  const prices = products.map(p => Number(p.current_price)).filter(p => p > 0)
+  const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0
+
+  const increases = priceHistory.filter(h => Number(h.new_price) > Number(h.old_price)).length
+  const decreases = priceHistory.filter(h => Number(h.new_price) < Number(h.old_price)).length
+
+  const significantChanges = competitors.filter(cp => {
+    const product = products.find(p => p.product_id === cp.product_id)
+    if (!product) return false
+    const diff = Math.abs(Number(cp.competitor_price) - Number(product.current_price)) / Number(product.current_price)
+    return diff > 0.1
+  }).length
+
+  const pricingStats = [
+    { title: "Avg Product Price", value: `₹${avgPrice.toFixed(2)}`, icon: DollarSign, change: `${products.length} products` },
+    { title: "Price Increases", value: increases.toString(), icon: TrendingUp, change: "Auto-adjusted" },
+    { title: "Price Decreases", value: decreases.toString(), icon: TrendingDown, change: "Competitive matching" },
+    { title: "Price Alerts", value: significantChanges.toString(), icon: Target, change: `${significantChanges} critical` },
+  ]
+
+  const priceAdjustments = priceHistory
+    .filter(h => h.old_price && h.new_price)
+    .map(h => {
+      const product = products.find(p => p.product_id === h.product_id)
+      const oldP = Number(h.old_price)
+      const newP = Number(h.new_price)
+      const changePct = oldP > 0 ? ((newP - oldP) / oldP * 100) : 0
+      return {
+        product: product?.name || "Unknown",
+        sku: product?.sku || "N/A",
+        oldPrice: `₹${oldP.toFixed(2)}`,
+        newPrice: `₹${newP.toFixed(2)}`,
+        change: `${changePct >= 0 ? "+" : ""}${changePct.toFixed(1)}%`,
+        reason: h.change_reason || "Price update",
+        agent: h.changed_by || "pricing_agent",
+        timestamp: h.created_at,
+        isIncrease: changePct > 0,
+      }
+    })
+
+  const productMap = new Map(products.map(p => [p.product_id, p]))
+  const competitorMap = new Map<string, { ours: number; prices: Record<string, number> }>()
+  for (const cp of competitors) {
+    const product = productMap.get(cp.product_id)
+    if (!product) continue
+    if (!competitorMap.has(product.name)) {
+      competitorMap.set(product.name, { ours: Number(product.current_price), prices: {} })
+    }
+    const entry = competitorMap.get(product.name)!
+    entry.prices[cp.competitor_name || "Unknown"] = Number(cp.competitor_price)
+  }
+  const competitorPrices = Array.from(competitorMap.entries())
+    .slice(0, 6)
+    .map(([product, data]) => ({
+      product: product.length > 30 ? product.substring(0, 30) + "..." : product,
+      ours: `₹${data.ours.toFixed(2)}`,
+      competitors: Object.entries(data.prices).slice(0, 3).map(([name, price]) => ({
+        name,
+        price: `₹${price.toFixed(2)}`,
+      })),
+    }))
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -102,39 +131,43 @@ export default function PricingPage() {
             <CardDescription>AI-optimized price changes</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {priceAdjustments.map((item, index) => (
-              <div
-                key={index}
-                className="flex items-center justify-between rounded-lg border p-3"
-              >
-                <div className="space-y-1">
-                  <p className="font-medium text-sm">{item.product}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {item.sku} &middot; {item.reason}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {item.agent} &middot; {item.timestamp}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-muted-foreground line-through">
-                      {item.oldPrice}
-                    </span>
-                    <span className="font-medium">{item.newPrice}</span>
+            {priceAdjustments.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No price adjustments yet</p>
+            ) : (
+              priceAdjustments.map((item, index) => (
+                <div
+                  key={index}
+                  className="flex items-center justify-between rounded-lg border p-3"
+                >
+                  <div className="space-y-1">
+                    <p className="font-medium text-sm">{item.product}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {item.sku} &middot; {item.reason}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {item.agent} &middot; {new Date(item.timestamp).toLocaleDateString()}
+                    </p>
                   </div>
-                  <span
-                    className={`text-xs font-medium ${
-                      item.change.startsWith("+")
-                        ? "text-green-600 dark:text-green-400"
-                        : "text-red-600 dark:text-red-400"
-                    }`}
-                  >
-                    {item.change}
-                  </span>
+                  <div className="text-right">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground line-through">
+                        {item.oldPrice}
+                      </span>
+                      <span className="font-medium">{item.newPrice}</span>
+                    </div>
+                    <span
+                      className={`text-xs font-medium ${
+                        item.isIncrease
+                          ? "text-green-600 dark:text-green-400"
+                          : "text-red-600 dark:text-red-400"
+                      }`}
+                    >
+                      {item.change}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </CardContent>
         </Card>
 
@@ -150,9 +183,9 @@ export default function PricingPage() {
                   <tr className="border-b">
                     <th className="pb-2 text-left font-medium text-muted-foreground">Product</th>
                     <th className="pb-2 text-left font-medium text-muted-foreground">Ours</th>
-                    <th className="pb-2 text-left font-medium text-muted-foreground">Comp. 1</th>
-                    <th className="pb-2 text-left font-medium text-muted-foreground">Comp. 2</th>
-                    <th className="pb-2 text-left font-medium text-muted-foreground">Comp. 3</th>
+                    {competitorPrices[0]?.competitors.map((_, i) => (
+                      <th key={i} className="pb-2 text-left font-medium text-muted-foreground">Comp. {i + 1}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -160,9 +193,9 @@ export default function PricingPage() {
                     <tr key={item.product} className="border-b last:border-0">
                       <td className="py-3 font-medium">{item.product}</td>
                       <td className="py-3 font-bold text-primary">{item.ours}</td>
-                      <td className="py-3 text-muted-foreground">{item.competitor1}</td>
-                      <td className="py-3 text-muted-foreground">{item.competitor2}</td>
-                      <td className="py-3 text-muted-foreground">{item.competitor3}</td>
+                      {item.competitors.map((c, i) => (
+                        <td key={i} className="py-3 text-muted-foreground">{c.price}</td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>

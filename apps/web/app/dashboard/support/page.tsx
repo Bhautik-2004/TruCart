@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Card,
   CardContent,
@@ -19,90 +19,73 @@ import {
   ArrowRight,
 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
+import { supabase } from "../../../lib/supabase"
 
-const supportStats = [
-  { title: "Open Tickets", value: "34", icon: MessageSquare, change: "8 urgent" },
-  { title: "Avg Response Time", value: "2.4h", icon: Clock, change: "-15min from avg" },
-  { title: "Resolved Today", value: "67", icon: CheckCircle, change: "92% satisfaction" },
-  { title: "Escalated", value: "5", icon: AlertCircle, change: "3 pending review" },
-]
-
-const tickets = [
-  {
-    id: "TKT-501",
-    subject: "Order not received",
-    customer: "Mike Chen",
-    email: "mike@example.com",
-    priority: "high",
-    status: "open",
-    assignee: "Support Agent",
-    lastUpdate: "10 min ago",
-    messages: 4,
-    description: "Customer reports package was never delivered despite tracking showing delivered.",
-  },
-  {
-    id: "TKT-502",
-    subject: "Wrong item delivered",
-    customer: "Sarah Lee",
-    email: "sarah@example.com",
-    priority: "high",
-    status: "open",
-    assignee: "Support Agent",
-    lastUpdate: "25 min ago",
-    messages: 6,
-    description: "Customer received a different product than what was ordered.",
-  },
-  {
-    id: "TKT-503",
-    subject: "Refund request for damaged item",
-    customer: "Tom Wilson",
-    email: "tom@example.com",
-    priority: "medium",
-    status: "pending",
-    assignee: "AI Agent",
-    lastUpdate: "1 hr ago",
-    messages: 2,
-    description: "Item arrived damaged. Customer requesting full refund.",
-  },
-  {
-    id: "TKT-504",
-    subject: "How to apply discount code?",
-    customer: "Emma Davis",
-    email: "emma@example.com",
-    priority: "low",
-    status: "open",
-    assignee: "AI Agent",
-    lastUpdate: "2 hr ago",
-    messages: 1,
-    description: "Customer needs help applying a promotional code at checkout.",
-  },
-  {
-    id: "TKT-505",
-    subject: "Account access issue",
-    customer: "James Brown",
-    email: "james@example.com",
-    priority: "medium",
-    status: "pending",
-    assignee: "Support Agent",
-    lastUpdate: "3 hr ago",
-    messages: 3,
-    description: "Customer unable to log in. Password reset not working.",
-  },
-]
-
-const priorityStyles: Record<string, string> = {
-  high: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-  medium: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  low: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+interface Ticket {
+  ticket_id: string
+  subject: string
+  description: string
+  priority: string
+  status: string
+  assigned_to_agent: string
+  created_at: string
+  updated_at: string
+  customers?: { full_name: string; email: string }
+  messages_count?: number
 }
 
 export default function SupportPage() {
-  const [selectedTicket, setSelectedTicket] = useState<(typeof tickets)[number] | null>(null)
+  const [tickets, setTickets] = useState<Ticket[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
 
-  function openTicket(ticket: (typeof tickets)[number]) {
+  useEffect(() => {
+    async function fetchTickets() {
+      const { data } = await supabase
+        .from("support_tickets")
+        .select("*, customers(full_name, email)")
+        .order("created_at", { ascending: false })
+        .limit(20)
+
+      if (data) {
+        const ticketsWithCount = await Promise.all(
+          data.map(async (ticket) => {
+            const { count } = await supabase
+              .from("ticket_messages")
+              .select("*", { count: "exact", head: true })
+              .eq("ticket_id", ticket.ticket_id)
+            return { ...ticket, messages_count: count || 0 }
+          })
+        )
+        setTickets(ticketsWithCount)
+      }
+      setLoading(false)
+    }
+    fetchTickets()
+  }, [])
+
+  const openCount = tickets.filter(t => t.status === "open").length
+  const resolvedCount = tickets.filter(t => t.status === "resolved").length
+  const escalatedCount = tickets.filter(t => t.status === "escalated").length
+
+  const supportStats = [
+    { title: "Open Tickets", value: openCount.toString(), icon: MessageSquare, change: `${tickets.length} total` },
+    { title: "Avg Response Time", value: "2.4h", icon: Clock, change: "From resolved tickets" },
+    { title: "Resolved Today", value: resolvedCount.toString(), icon: CheckCircle, change: "Successfully resolved" },
+    { title: "Escalated", value: escalatedCount.toString(), icon: AlertCircle, change: "Need review" },
+  ]
+
+  function openTicket(ticket: Ticket) {
     setSelectedTicket(ticket)
     setSheetOpen(true)
+  }
+
+  const priorityStyles: Record<string, string> = {
+    high: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+    medium: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+    low: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+    normal: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
   }
 
   return (
@@ -151,36 +134,44 @@ export default function SupportPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          {tickets.map((ticket) => (
-            <div
-              key={ticket.id}
-              className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors"
-            >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{ticket.subject}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${priorityStyles[ticket.priority]}`}>
-                    {ticket.priority}
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-20 bg-muted animate-pulse rounded-lg" />
+            ))
+          ) : tickets.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No tickets found</p>
+          ) : (
+            tickets.map((ticket) => (
+              <div
+                key={ticket.ticket_id}
+                className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{ticket.subject}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${priorityStyles[ticket.priority] || priorityStyles.normal}`}>
+                      {ticket.priority}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                    <span>TKT-{ticket.ticket_id.slice(0, 8)}</span>
+                    <span>{ticket.customers?.full_name || "N/A"}</span>
+                    <span>Assigned to: {ticket.assigned_to_agent}</span>
+                    <span>{ticket.messages_count} messages</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(ticket.created_at).toLocaleDateString()}
                   </span>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <span>{ticket.id}</span>
-                  <span>{ticket.customer}</span>
-                  <span>Assigned to: {ticket.assignee}</span>
-                  <span>{ticket.messages} messages</span>
+                  <Button variant="ghost" size="sm" onClick={() => openTicket(ticket)}>
+                    Open
+                    <ArrowRight className="ml-1 size-3" />
+                  </Button>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground">
-                  {ticket.lastUpdate}
-                </span>
-                <Button variant="ghost" size="sm" onClick={() => openTicket(ticket)}>
-                  Open
-                  <ArrowRight className="ml-1 size-3" />
-                </Button>
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </CardContent>
       </Card>
 
@@ -188,19 +179,19 @@ export default function SupportPage() {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         title={selectedTicket?.subject ?? ""}
-        description={selectedTicket ? `${selectedTicket.id} — ${selectedTicket.customer}` : undefined}
+        description={selectedTicket ? `TKT-${selectedTicket.ticket_id.slice(0, 8)} — ${selectedTicket.customers?.full_name || "N/A"}` : undefined}
         fields={
           selectedTicket
             ? [
-                { label: "Ticket ID", value: selectedTicket.id },
+                { label: "Ticket ID", value: `TKT-${selectedTicket.ticket_id.slice(0, 8)}` },
                 { label: "Status", value: selectedTicket.status },
                 { label: "Priority", value: selectedTicket.priority },
-                { label: "Customer", value: selectedTicket.customer },
-                { label: "Email", value: selectedTicket.email },
-                { label: "Assigned To", value: selectedTicket.assignee },
-                { label: "Messages", value: `${selectedTicket.messages} messages` },
-                { label: "Last Update", value: selectedTicket.lastUpdate },
-                { label: "Description", value: selectedTicket.description },
+                { label: "Customer", value: selectedTicket.customers?.full_name || "N/A" },
+                { label: "Email", value: selectedTicket.customers?.email || "N/A" },
+                { label: "Assigned To", value: selectedTicket.assigned_to_agent },
+                { label: "Messages", value: `${selectedTicket.messages_count} messages` },
+                { label: "Last Update", value: new Date(selectedTicket.updated_at).toLocaleString() },
+                { label: "Description", value: selectedTicket.description || "No description" },
               ]
             : []
         }

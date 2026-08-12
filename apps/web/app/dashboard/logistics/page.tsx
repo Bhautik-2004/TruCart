@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Card,
   CardContent,
@@ -11,87 +11,75 @@ import { Button } from "@workspace/ui/components/button"
 import {
   Truck,
   Package,
-  Clock,
-  MapPin,
   CheckCircle,
   AlertCircle,
   RefreshCw,
   ExternalLink,
 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
+import { supabase } from "../../../lib/supabase"
 
-const logisticsStats = [
-  { title: "In Transit", value: "142", icon: Truck, change: "23 arriving today" },
-  { title: "Pending Pickup", value: "38", icon: Package, change: "12 urgent" },
-  { title: "Avg Delivery Time", value: "2.3 days", icon: Clock, change: "-0.2 days this week" },
-  { title: "Delivery Issues", value: "5", icon: AlertCircle, change: "2 need attention" },
-]
-
-const shipments = [
-  {
-    id: "SHP-001",
-    order: "ORD-1234",
-    carrier: "FedEx",
-    tracking: "FX-9876543210",
-    destination: "New York, NY",
-    status: "in_transit",
-    eta: "Tomorrow, 2:00 PM",
-    lastUpdate: "Package departed facility",
-    weight: "2.5 lbs",
-    dimensions: '12" x 8" x 4"',
-  },
-  {
-    id: "SHP-002",
-    order: "ORD-1233",
-    carrier: "UPS",
-    tracking: "UP-1234567890",
-    destination: "Los Angeles, CA",
-    status: "out_for_delivery",
-    eta: "Today, 5:00 PM",
-    lastUpdate: "Out for delivery",
-    weight: "1.2 lbs",
-    dimensions: '10" x 6" x 3"',
-  },
-  {
-    id: "SHP-003",
-    order: "ORD-1232",
-    carrier: "USPS",
-    tracking: "US-5678901234",
-    destination: "Chicago, IL",
-    status: "delivered",
-    eta: "Delivered",
-    lastUpdate: "Delivered to front door",
-    weight: "5.0 lbs",
-    dimensions: '18" x 12" x 6"',
-  },
-  {
-    id: "SHP-004",
-    order: "ORD-1231",
-    carrier: "DHL",
-    tracking: "DH-3456789012",
-    destination: "Houston, TX",
-    status: "pending",
-    eta: "Pending pickup",
-    lastUpdate: "Awaiting carrier pickup",
-    weight: "0.8 lbs",
-    dimensions: '8" x 5" x 2"',
-  },
-]
-
-const statusStyles: Record<string, string> = {
-  in_transit: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-  out_for_delivery: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  delivered: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
-  pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+interface Shipment {
+  shipment_id: string
+  order_id: string
+  carrier: string
+  tracking_number: string
+  status: string
+  shipped_at: string
+  delivered_at: string
+  estimated_delivery: string
+  shipping_cost: number
+  orders?: {
+    order_number: string
+    shipping_address_id: string
+  }
 }
 
 export default function LogisticsPage() {
-  const [selectedShipment, setSelectedShipment] = useState<(typeof shipments)[number] | null>(null)
+  const [shipments, setShipments] = useState<Shipment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
 
-  function openShipment(shipment: (typeof shipments)[number]) {
+  useEffect(() => {
+    async function fetchShipments() {
+      const { data } = await supabase
+        .from("shipments")
+        .select("*, orders(order_number, shipping_address_id)")
+        .order("created_at", { ascending: false })
+        .limit(20)
+
+      setShipments(data || [])
+      setLoading(false)
+    }
+    fetchShipments()
+  }, [])
+
+  const inTransit = shipments.filter(s => s.status === "in_transit").length
+  const pendingPickup = shipments.filter(s => s.status === "label_created" || s.status === "pending").length
+  const delivered = shipments.filter(s => s.status === "delivered").length
+  const issues = shipments.filter(s => s.status === "exception" || s.status === "failed").length
+
+  const logisticsStats = [
+    { title: "In Transit", value: inTransit.toString(), icon: Truck, change: "Currently shipping" },
+    { title: "Pending Pickup", value: pendingPickup.toString(), icon: Package, change: "Awaiting carrier" },
+    { title: "Delivered", value: delivered.toString(), icon: CheckCircle, change: "Successfully delivered" },
+    { title: "Issues", value: issues.toString(), icon: AlertCircle, change: "Need attention" },
+  ]
+
+  function openShipment(shipment: Shipment) {
     setSelectedShipment(shipment)
     setSheetOpen(true)
+  }
+
+  const statusStyles: Record<string, string> = {
+    label_created: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+    pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+    in_transit: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+    out_for_delivery: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+    delivered: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
+    exception: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+    failed: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
   }
 
   return (
@@ -131,60 +119,67 @@ export default function LogisticsPage() {
           <CardTitle>Active Shipments</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {shipments.map((shipment) => (
-            <div
-              key={shipment.id}
-              className="flex items-center justify-between rounded-lg border p-4"
-            >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{shipment.id}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[shipment.status]}`}>
-                    {shipment.status.replace(/_/g, " ")}
-                  </span>
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />
+            ))
+          ) : shipments.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No shipments found</p>
+          ) : (
+            shipments.map((shipment) => (
+              <div
+                key={shipment.shipment_id}
+                className="flex items-center justify-between rounded-lg border p-4"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">SHP-{shipment.shipment_id.slice(0, 8)}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[shipment.status] || "bg-gray-100 text-gray-800"}`}>
+                      {shipment.status.replace(/_/g, " ")}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                    <span>Order: {shipment.orders?.order_number || "N/A"}</span>
+                    <span>{shipment.carrier || "N/A"}</span>
+                    <span>{shipment.tracking_number || "N/A"}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {shipment.estimated_delivery
+                      ? `ETA: ${new Date(shipment.estimated_delivery).toLocaleDateString()}`
+                      : "No ETA"}
+                  </p>
                 </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <span>Order: {shipment.order}</span>
-                  <span>{shipment.carrier}</span>
-                  <span>{shipment.tracking}</span>
+                <div className="text-right">
+                  <p className="text-sm font-medium">
+                    {shipment.shipping_cost ? `₹${Number(shipment.shipping_cost).toFixed(2)}` : "N/A"}
+                  </p>
+                  <Button variant="ghost" size="sm" onClick={() => openShipment(shipment)}>
+                    Track
+                    <ExternalLink className="ml-1 size-3" />
+                  </Button>
                 </div>
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <MapPin className="size-3" />
-                  {shipment.destination}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {shipment.lastUpdate}
-                </p>
               </div>
-              <div className="text-right">
-                <p className="text-sm font-medium">{shipment.eta}</p>
-                <Button variant="ghost" size="sm" onClick={() => openShipment(shipment)}>
-                  Track
-                  <ExternalLink className="ml-1 size-3" />
-                </Button>
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </CardContent>
       </Card>
 
       <DetailSheet
         open={sheetOpen}
         onOpenChange={setSheetOpen}
-        title={selectedShipment ? `Shipment ${selectedShipment.id}` : ""}
-        description={selectedShipment ? `${selectedShipment.carrier} — ${selectedShipment.tracking}` : undefined}
+        title={selectedShipment ? `Shipment SHP-${selectedShipment.shipment_id.slice(0, 8)}` : ""}
+        description={selectedShipment ? `${selectedShipment.carrier || "N/A"} — ${selectedShipment.tracking_number || "N/A"}` : undefined}
         fields={
           selectedShipment
             ? [
-                { label: "Status", value: <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[selectedShipment.status]}`}>{selectedShipment.status.replace(/_/g, " ")}</span> },
-                { label: "Order", value: selectedShipment.order },
-                { label: "Carrier", value: selectedShipment.carrier },
-                { label: "Tracking Number", value: selectedShipment.tracking },
-                { label: "Destination", value: selectedShipment.destination },
-                { label: "ETA", value: selectedShipment.eta },
-                { label: "Weight", value: selectedShipment.weight },
-                { label: "Dimensions", value: selectedShipment.dimensions },
-                { label: "Last Update", value: selectedShipment.lastUpdate },
+                { label: "Status", value: <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[selectedShipment.status] || "bg-gray-100 text-gray-800"}`}>{selectedShipment.status.replace(/_/g, " ")}</span> },
+                { label: "Order", value: selectedShipment.orders?.order_number || "N/A" },
+                { label: "Carrier", value: selectedShipment.carrier || "N/A" },
+                { label: "Tracking Number", value: selectedShipment.tracking_number || "N/A" },
+                { label: "ETA", value: selectedShipment.estimated_delivery ? new Date(selectedShipment.estimated_delivery).toLocaleDateString() : "N/A" },
+                { label: "Shipping Cost", value: selectedShipment.shipping_cost ? `₹${Number(selectedShipment.shipping_cost).toFixed(2)}` : "N/A" },
+                { label: "Shipped At", value: selectedShipment.shipped_at ? new Date(selectedShipment.shipped_at).toLocaleString() : "N/A" },
+                { label: "Delivered At", value: selectedShipment.delivered_at ? new Date(selectedShipment.delivered_at).toLocaleString() : "N/A" },
               ]
             : []
         }
