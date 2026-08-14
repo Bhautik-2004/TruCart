@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { Button } from "@workspace/ui/components/button"
 import { FileQuestion } from "lucide-react"
 
@@ -13,9 +14,9 @@ export default function NotFound() {
           The page you&apos;re looking for doesn&apos;t exist.
         </p>
       </div>
-      <Button nativeButton={false} render={<a href="/dashboard" />}>
-        Back to Dashboard
-      </Button>
+      <Link href="/dashboard">
+        <Button>Back to Dashboard</Button>
+      </Link>
     </div>
   )
 }
