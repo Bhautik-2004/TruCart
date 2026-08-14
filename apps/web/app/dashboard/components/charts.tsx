@@ -194,10 +194,19 @@ export function TopProductsChart({ data }: { data: TopProduct[] }) {
       <CardContent>
         <div className="h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} layout="vertical" margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+            <BarChart data={data} layout="vertical" margin={{ top: 5, right: 16, left: 0, bottom: 5 }} barCategoryGap="30%">
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" horizontal={false} />
               <XAxis type="number" className="text-xs" tickLine={false} axisLine={false} />
-              <YAxis type="category" dataKey="name" className="text-xs" tickLine={false} axisLine={false} width={120} />
+              <YAxis
+                type="category"
+                dataKey="name"
+                className="text-xs"
+                tickLine={false}
+                axisLine={false}
+                width={140}
+                interval={0}
+                tickFormatter={(value: string) => (value.length > 18 ? `${value.slice(0, 18)}…` : value)}
+              />
               <Tooltip content={<ChartTooltipContent />} />
               <Bar dataKey="sales" name="Units Sold" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
             </BarChart>

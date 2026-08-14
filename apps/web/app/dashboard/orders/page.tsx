@@ -19,18 +19,28 @@ import {
   ExternalLink,
 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
-import { supabase } from "../../../lib/supabase"
+
+interface Address {
+  line1: string
+  line2: string | null
+  city: string
+  state: string | null
+  postal_code: string | null
+  country: string
+}
 
 interface Order {
   order_id: string
   order_number: string
   customer_id: string
+  shipping_address_id: string | null
   status: string
   total_amount: number
   payment_method: string
   placed_at: string
   customers?: { full_name: string }
   items_count?: number
+  address?: Address
 }
 
 export default function OrdersPage() {
@@ -41,24 +51,9 @@ export default function OrdersPage() {
 
   useEffect(() => {
     async function fetchOrders() {
-      const { data } = await supabase
-        .from("orders")
-        .select("*, customers(full_name)")
-        .order("placed_at", { ascending: false })
-        .limit(20)
-
-      if (data) {
-        const ordersWithCount = await Promise.all(
-          data.map(async (order) => {
-            const { count } = await supabase
-              .from("order_items")
-              .select("*", { count: "exact", head: true })
-              .eq("order_id", order.order_id)
-            return { ...order, items_count: count || 0 }
-          })
-        )
-        setOrders(ordersWithCount)
-      }
+      const res = await fetch("/api/orders")
+      const { orders } = await res.json()
+      setOrders(orders || [])
       setLoading(false)
     }
     fetchOrders()
@@ -201,6 +196,9 @@ export default function OrdersPage() {
                 { label: "Total", value: `₹${Number(selectedOrder.total_amount).toFixed(2)}` },
                 { label: "Date", value: new Date(selectedOrder.placed_at).toLocaleString() },
                 { label: "Payment Method", value: selectedOrder.payment_method || "N/A" },
+                { label: "Shipping Address", value: selectedOrder.address
+                    ? [selectedOrder.address.line1, selectedOrder.address.line2, selectedOrder.address.city, selectedOrder.address.state, selectedOrder.address.postal_code, selectedOrder.address.country].filter(Boolean).join(", ")
+                    : "N/A" },
               ]
             : []
         }

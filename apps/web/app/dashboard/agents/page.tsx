@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@workspace/ui/components/card"
 import { Button } from "@workspace/ui/components/button"
-import { Bot, Settings, Activity, Zap, Clock, CheckCircle, AlertCircle } from "lucide-react"
+import { Bot, Settings, Activity, Clock, CheckCircle, AlertCircle, Zap } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
-import { supabase } from "../../../lib/supabase"
 
 interface AgentData {
   agent_name: string
@@ -15,6 +14,12 @@ interface AgentData {
   last_active: string
   accuracy: number
   status: string
+}
+
+interface AgentConfigRow {
+  config_key: string
+  config_value: unknown
+  updated_at: string
 }
 
 const displayNames: Record<string, string> = {
@@ -33,41 +38,70 @@ const statusStyles: Record<string, string> = {
   active: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
   idle: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
 }
+const runnableAgents = ["inventory_agent", "pricing_agent", "support_agent"]
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentData[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [configAgent, setConfigAgent] = useState<AgentData | null>(null)
+  const [configRows, setConfigRows] = useState<AgentConfigRow[]>([])
+  const [configSheetOpen, setConfigSheetOpen] = useState(false)
+  const [runningAgents, setRunningAgents] = useState<Set<string>>(new Set())
 
-  useEffect(() => {
-    async function fetchAgents() {
-      const today = new Date().toISOString().split("T")[0]
-      const { data: taskLogs } = await supabase
-        .from("agent_task_log").select("agent_name, status, created_at").gte("created_at", today)
+  async function openConfig(agent: AgentData) {
+    setConfigAgent(agent)
+    setConfigSheetOpen(true)
+    const res = await fetch(`/api/agents/config?agent_name=${encodeURIComponent(agent.agent_name)}`)
+    const { config } = await res.json()
+    setConfigRows(config || [])
+  }
 
-      const agentNames = ["inventory_agent","order_agent","support_agent","pricing_agent","marketing_agent","logistics_agent"]
-      const agentMap = new Map<string, AgentData>()
-      for (const name of agentNames) {
-        agentMap.set(name, { agent_name: name, total_tasks: 0, completed_tasks: 0, error_tasks: 0, last_active: "", accuracy: 0, status: "idle" })
+  async function fetchAgents() {
+    const res = await fetch("/api/agents")
+    const { taskLogs } = await res.json()
+
+    const agentNames = ["inventory_agent","order_agent","support_agent","pricing_agent","marketing_agent","logistics_agent"]
+    const agentMap = new Map<string, AgentData>()
+    for (const name of agentNames) {
+      agentMap.set(name, { agent_name: name, total_tasks: 0, completed_tasks: 0, error_tasks: 0, last_active: "", accuracy: 0, status: "idle" })
+    }
+    for (const log of taskLogs || []) {
+      const agent = agentMap.get(log.agent_name)
+      if (agent) {
+        agent.total_tasks++
+        if (log.status === "completed") agent.completed_tasks++
+        if (log.status === "error" || log.status === "failed") agent.error_tasks++
+        if (!agent.last_active || log.created_at > agent.last_active) agent.last_active = log.created_at
       }
-      for (const log of taskLogs || []) {
-        const agent = agentMap.get(log.agent_name)
-        if (agent) {
-          agent.total_tasks++
-          if (log.status === "completed") agent.completed_tasks++
-          if (log.status === "error" || log.status === "failed") agent.error_tasks++
-          if (!agent.last_active || log.created_at > agent.last_active) agent.last_active = log.created_at
-        }
-      }
-      const result = Array.from(agentMap.values()).filter(a => a.total_tasks > 0).map(a => ({
+    }
+    const result = Array.from(agentMap.values())
+      .filter(a => a.total_tasks > 0 || runnableAgents.includes(a.agent_name))
+      .map(a => ({
         ...a, accuracy: a.total_tasks > 0 ? (a.completed_tasks / a.total_tasks) * 100 : 0, status: a.total_tasks > 0 ? "active" : "idle",
       })).sort((a, b) => b.total_tasks - a.total_tasks)
-      setAgents(result)
-      setLoading(false)
-    }
+    setAgents(result)
+    setLoading(false)
+  }
+
+  useEffect(() => {
     fetchAgents()
   }, [])
+
+  async function runAgent(agentName: string) {
+    setRunningAgents(prev => new Set(prev).add(agentName))
+    try {
+      await fetch(`/api/agents/${agentName}/run`, { method: "POST" })
+      await fetchAgents()
+    } finally {
+      setRunningAgents(prev => {
+        const next = new Set(prev)
+        next.delete(agentName)
+        return next
+      })
+    }
+  }
 
   const activeAgents = agents.filter(a => a.status === "active").length
   const totalTasks = agents.reduce((sum, a) => sum + a.total_tasks, 0)
@@ -89,7 +123,7 @@ export default function AgentsPage() {
           <h2 className="text-2xl font-bold tracking-tight">Agents</h2>
           <p className="text-muted-foreground">Monitor and manage your AI-powered agents.</p>
         </div>
-        <Button variant="outline"><Settings className="mr-2 size-4" />Configure</Button>
+        <Button variant="outline" disabled={agents.length === 0} onClick={() => agents[0] && openConfig(agents[0])}><Settings className="mr-2 size-4" />Configure</Button>
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {agentStats.map((stat) => (
@@ -135,8 +169,19 @@ export default function AgentsPage() {
               </div>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" className="flex-1" onClick={() => { setSelectedAgent(agent); setSheetOpen(true) }}><Activity className="mr-1 size-3" />Logs</Button>
-                <Button size="sm" variant="outline" className="flex-1" onClick={() => { setSelectedAgent(agent); setSheetOpen(true) }}><Zap className="mr-1 size-3" />Metrics</Button>
+                <Button size="sm" variant="outline" className="flex-1" onClick={() => openConfig(agent)}><Settings className="mr-1 size-3" />Configure</Button>
               </div>
+              {runnableAgents.includes(agent.agent_name) && (
+                <Button
+                  size="sm"
+                  className="w-full"
+                  disabled={runningAgents.has(agent.agent_name)}
+                  onClick={() => runAgent(agent.agent_name)}
+                >
+                  <Zap className="mr-1 size-3" />
+                  {runningAgents.has(agent.agent_name) ? "Running…" : "Run Now"}
+                </Button>
+              )}
             </CardContent>
           </Card>
         ))}
@@ -154,8 +199,19 @@ export default function AgentsPage() {
         ] : []}
         actions={selectedAgent ? [
           { label: "View Logs", onClick: () => setSheetOpen(false) },
-          { label: "Configure", variant: "outline" as const, onClick: () => setSheetOpen(false) },
+          { label: "Configure", variant: "outline" as const, onClick: () => { setSheetOpen(false); if (selectedAgent) openConfig(selectedAgent) } },
         ] : []}
+      />
+      <DetailSheet open={configSheetOpen} onOpenChange={setConfigSheetOpen}
+        title={configAgent ? `${displayNames[configAgent.agent_name] || configAgent.agent_name} Config` : ""}
+        description="Runtime configuration stored in agent_config"
+        fields={configRows.length > 0 ? configRows.map(row => ({
+          label: row.config_key,
+          value: typeof row.config_value === "object" ? JSON.stringify(row.config_value) : String(row.config_value),
+        })) : [{ label: "No configuration", value: "This agent has no config entries yet." }]}
+        actions={[
+          { label: "Close", variant: "outline" as const, onClick: () => setConfigSheetOpen(false) },
+        ]}
       />
     </div>
   )

@@ -17,7 +17,6 @@ import {
   ExternalLink,
 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
-import { supabase } from "../../../lib/supabase"
 
 interface Shipment {
   shipment_id: string
@@ -43,13 +42,9 @@ export default function LogisticsPage() {
 
   useEffect(() => {
     async function fetchShipments() {
-      const { data } = await supabase
-        .from("shipments")
-        .select("*, orders(order_number, shipping_address_id)")
-        .order("created_at", { ascending: false })
-        .limit(20)
-
-      setShipments(data || [])
+      const res = await fetch("/api/logistics")
+      const { shipments } = await res.json()
+      setShipments(shipments || [])
       setLoading(false)
     }
     fetchShipments()

@@ -18,7 +18,6 @@ import {
   ArrowRight,
 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
-import { supabase } from "../../../lib/supabase"
 
 interface ReviewItem {
   review_id: string
@@ -36,20 +35,38 @@ export default function ReviewQueuePage() {
   const [loading, setLoading] = useState(true)
   const [selectedItem, setSelectedItem] = useState<ReviewItem | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [actingOn, setActingOn] = useState<Set<string>>(new Set())
+
+  async function fetchReviewItems() {
+    const res = await fetch("/api/review")
+    const { reviewItems } = await res.json()
+    setReviewItems(reviewItems || [])
+    setLoading(false)
+  }
 
   useEffect(() => {
-    async function fetchReviewItems() {
-      const { data } = await supabase
-        .from("review_queue")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(20)
-
-      setReviewItems(data || [])
-      setLoading(false)
-    }
     fetchReviewItems()
   }, [])
+
+  async function handleReview(item: ReviewItem, action: "approve" | "reject") {
+    setActingOn(prev => new Set(prev).add(item.review_id))
+    try {
+      const user = JSON.parse(localStorage.getItem("user") ?? "null")
+      await fetch(`/api/review/${item.review_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, reviewer_id: user?.id ?? null, note: null }),
+      })
+      await fetchReviewItems()
+      setSheetOpen(false)
+    } finally {
+      setActingOn(prev => {
+        const next = new Set(prev)
+        next.delete(item.review_id)
+        return next
+      })
+    }
+  }
 
   const pendingItems = reviewItems.filter(i => i.status === "pending")
   const approvedToday = reviewItems.filter(i => {
@@ -138,11 +155,11 @@ export default function ReviewQueuePage() {
                 </p>
               </CardContent>
               <CardFooter className="flex gap-2">
-                <Button size="sm">
+                <Button size="sm" disabled={actingOn.has(item.review_id)} onClick={() => handleReview(item, "approve")}>
                   <CheckCircle className="mr-1 size-3" />
                   Approve
                 </Button>
-                <Button size="sm" variant="destructive">
+                <Button size="sm" variant="destructive" disabled={actingOn.has(item.review_id)} onClick={() => handleReview(item, "reject")}>
                   <XCircle className="mr-1 size-3" />
                   Reject
                 </Button>
@@ -181,8 +198,8 @@ export default function ReviewQueuePage() {
         actions={
           selectedItem
             ? [
-                { label: "Approve", onClick: () => setSheetOpen(false), icon: <CheckCircle className="mr-1 size-3" /> },
-                { label: "Reject", variant: "destructive" as const, onClick: () => setSheetOpen(false), icon: <XCircle className="mr-1 size-3" /> },
+                { label: "Approve", onClick: () => handleReview(selectedItem, "approve"), icon: <CheckCircle className="mr-1 size-3" /> },
+                { label: "Reject", variant: "destructive" as const, onClick: () => handleReview(selectedItem, "reject"), icon: <XCircle className="mr-1 size-3" /> },
               ]
             : []
         }

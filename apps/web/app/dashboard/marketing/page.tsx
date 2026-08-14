@@ -19,7 +19,6 @@ import {
   ExternalLink,
 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
-import { supabase } from "../../../lib/supabase"
 
 interface Campaign {
   campaign_id: string
@@ -46,13 +45,9 @@ export default function MarketingPage() {
 
   useEffect(() => {
     async function fetchCampaigns() {
-      const { data } = await supabase
-        .from("campaigns")
-        .select("*, campaign_metrics(recipients, opened, clicked, converted)")
-        .order("created_at", { ascending: false })
-        .limit(20)
-
-      setCampaigns(data || [])
+      const res = await fetch("/api/marketing")
+      const { campaigns } = await res.json()
+      setCampaigns(campaigns || [])
       setLoading(false)
     }
     fetchCampaigns()

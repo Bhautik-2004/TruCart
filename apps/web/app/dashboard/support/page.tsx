@@ -34,32 +34,40 @@ interface Ticket {
   messages_count?: number
 }
 
+interface KnowledgeBaseEntry {
+  kb_id: string
+  doc_type: string
+  title: string | null
+  content: string
+  created_at: string
+}
+
 export default function SupportPage() {
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [kbEntries, setKbEntries] = useState<KnowledgeBaseEntry[]>([])
+  const [kbLoading, setKbLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchKnowledgeBase() {
+      const { data } = await supabase
+        .from("knowledge_base")
+        .select("kb_id, doc_type, title, content, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10)
+      setKbEntries(data || [])
+      setKbLoading(false)
+    }
+    fetchKnowledgeBase()
+  }, [])
 
   useEffect(() => {
     async function fetchTickets() {
-      const { data } = await supabase
-        .from("support_tickets")
-        .select("*, customers(full_name, email)")
-        .order("created_at", { ascending: false })
-        .limit(20)
-
-      if (data) {
-        const ticketsWithCount = await Promise.all(
-          data.map(async (ticket) => {
-            const { count } = await supabase
-              .from("ticket_messages")
-              .select("*", { count: "exact", head: true })
-              .eq("ticket_id", ticket.ticket_id)
-            return { ...ticket, messages_count: count || 0 }
-          })
-        )
-        setTickets(ticketsWithCount)
-      }
+      const res = await fetch("/api/support")
+      const { tickets } = await res.json()
+      setTickets(tickets || [])
       setLoading(false)
     }
     fetchTickets()
@@ -169,6 +177,34 @@ export default function SupportPage() {
                     <ArrowRight className="ml-1 size-3" />
                   </Button>
                 </div>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Knowledge Base</CardTitle>
+          <p className="text-sm text-muted-foreground">Articles the support agent uses to answer questions.</p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {kbLoading ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-16 bg-muted animate-pulse rounded-lg" />
+            ))
+          ) : kbEntries.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No knowledge base articles yet</p>
+          ) : (
+            kbEntries.map((entry) => (
+              <div key={entry.kb_id} className="rounded-lg border p-4">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{entry.title || "Untitled"}</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                    {entry.doc_type}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{entry.content}</p>
               </div>
             ))
           )}

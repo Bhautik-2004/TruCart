@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .db import get_supabase
+from .routers.agents import router as agents_router
 
 load_dotenv(Path(__file__).parent.parent / ".env.local")
 
@@ -20,6 +21,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(agents_router)
 
 
 class LoginRequest(BaseModel):

@@ -23,11 +23,13 @@ export const dynamic = "force-dynamic"
 export default async function SettingsPage() {
   const supabase = createServerClient()
 
-  const { data: configData } = await supabase
-    .from("store_config")
-    .select("config_key, config_value")
+  const [{ data: configData }, { data: usersData }] = await Promise.all([
+    supabase.from("store_config").select("config_key, config_value"),
+    supabase.from("users").select("user_id, full_name, email, role, is_active").order("created_at", { ascending: true }),
+  ])
 
   const config = new Map((configData || []).map(c => [c.config_key, c.config_value]))
+  const teamMembers = usersData || []
 
   const storeName = config.get("store_name") || "TechBazaar"
   const emailEnabled = config.get("marketing.channel.email.enabled") !== "false"
@@ -75,6 +77,40 @@ export default async function SettingsPage() {
                 <Save className="mr-2 size-4" />
                 Save Changes
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <User className="size-5" />
+                <div>
+                  <CardTitle>Team</CardTitle>
+                  <CardDescription>Staff accounts with access to this admin panel</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {teamMembers.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No team members found.</p>
+              ) : (
+                <div className="space-y-3">
+                  {teamMembers.map((member) => (
+                    <div key={member.user_id} className="flex items-center justify-between rounded-lg border p-3">
+                      <div>
+                        <p className="text-sm font-medium">{member.full_name}</p>
+                        <p className="text-xs text-muted-foreground">{member.email}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium capitalize">{member.role}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${member.is_active ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"}`}>
+                          {member.is_active ? "Active" : "Disabled"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
