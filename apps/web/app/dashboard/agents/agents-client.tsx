@@ -1,20 +1,45 @@
 "use client"
 
 import { useState, useMemo } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@workspace/ui/components/card"
 import { Button } from "@workspace/ui/components/button"
-import { Bot, Settings, Activity, Zap, Clock, CheckCircle, AlertCircle } from "lucide-react"
+import { Bot, Settings, Activity, Zap, Clock, CheckCircle, AlertCircle, Play, Loader2 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
 
 interface TaskLog { log_id: string; task_type: string; status: string; model_used: string; tokens_used: number; created_at: string; agent_name: string }
 
 const displayNames: Record<string, string> = { inventory_agent: "Inventory Agent", order_agent: "Orders Agent", support_agent: "Support Agent", pricing_agent: "Pricing Agent", marketing_agent: "Marketing Agent", logistics_agent: "Logistics Agent" }
 const descriptionMap: Record<string, string> = { inventory_agent: "Monitors stock levels and manages reorders.", order_agent: "Processes orders and handles status updates.", support_agent: "Responds to customer inquiries with AI support.", pricing_agent: "Adjusts prices dynamically for optimal revenue.", marketing_agent: "Manages campaigns and tracks performance.", logistics_agent: "Optimizes shipping routes and tracks deliveries." }
+const implementedAgents = new Set(["inventory_agent", "pricing_agent", "support_agent"])
 
 export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
+  const router = useRouter()
   const [selectedAgent, setSelectedAgent] = useState<{ name: string; logs: TaskLog[]; stats: { total: number; completed: number; errors: number; accuracy: number; lastActive: string; status: string } } | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [sheetTab, setSheetTab] = useState<"logs" | "metrics">("logs")
+  const [runningAgent, setRunningAgent] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  async function handleRun(agentName: string) {
+    setRunningAgent(agentName)
+    try {
+      const res = await fetch(`/api/agents/${agentName}/run`, { method: "POST" })
+      const data = await res.json()
+      if (!res.ok || data.status === "error") {
+        setToast(`${displayNames[agentName] || agentName} run failed: ${data.error || data.detail || "unknown error"}`)
+      } else {
+        const s = data.summary || {}
+        setToast(`${displayNames[agentName] || agentName} run complete — scanned ${s.scanned ?? 0}, auto-executed ${s.auto_executed ?? 0}, escalated ${s.escalated ?? 0}.`)
+        router.refresh()
+      }
+    } catch (error) {
+      setToast(`${displayNames[agentName] || agentName} run failed: ${error instanceof Error ? error.message : "backend unreachable"}`)
+    } finally {
+      setRunningAgent(null)
+      setTimeout(() => setToast(null), 5000)
+    }
+  }
 
   const agents = useMemo(() => {
     const agentNames = ["inventory_agent", "order_agent", "support_agent", "pricing_agent", "marketing_agent", "logistics_agent"]
@@ -54,6 +79,8 @@ export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
 
   return (
     <div className="space-y-6">
+      {toast && <div className="fixed top-4 right-4 z-50 rounded-lg bg-green-600 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
+
       <div className="flex items-center justify-between">
         <div><h2 className="text-2xl font-bold tracking-tight">Agents</h2><p className="text-muted-foreground">Monitor and manage your AI-powered agents.</p></div>
         <Button variant="outline" onClick={() => alert("Agent configuration coming soon")}><Settings className="mr-2 size-4" />Configure</Button>
@@ -86,6 +113,15 @@ export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
                 <Button size="sm" variant="outline" className="flex-1" onClick={() => { setSelectedAgent(agent); setSheetTab("logs"); setSheetOpen(true) }}><Activity className="mr-1 size-3" />Logs</Button>
                 <Button size="sm" variant="outline" className="flex-1" onClick={() => { setSelectedAgent(agent); setSheetTab("metrics"); setSheetOpen(true) }}><Zap className="mr-1 size-3" />Metrics</Button>
               </div>
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={!implementedAgents.has(agent.name) || runningAgent === agent.name}
+                onClick={() => handleRun(agent.name)}
+                title={implementedAgents.has(agent.name) ? undefined : "Backend not implemented yet"}
+              >
+                {runningAgent === agent.name ? (<><Loader2 className="mr-1 size-3 animate-spin" />Running...</>) : (<><Play className="mr-1 size-3" />Run Agent</>)}
+              </Button>
             </CardContent>
           </Card>
         ))}
