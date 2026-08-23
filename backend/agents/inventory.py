@@ -75,6 +75,9 @@ def run_inventory_agent() -> dict[str, Any]:
             'return JSON {"items": [{"sku": "...", "justification": "one short sentence"}]}.'
         ),
         user_prompt=str(llm_input),
+        agent_name=AGENT_NAME,
+        correlation_id=correlation_id,
+        call_name="generate-restock-justifications",
     )
     justifications: dict[str, str] = {}
     if llm_result and isinstance(llm_result.get("items"), list):

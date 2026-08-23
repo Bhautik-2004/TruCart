@@ -95,6 +95,9 @@ def run_pricing_agent() -> dict[str, Any]:
             'return JSON {"items": [{"sku": "...", "change_reason": "one short sentence"}]}.'
         ),
         user_prompt=str(llm_input),
+        agent_name=AGENT_NAME,
+        correlation_id=correlation_id,
+        call_name="generate-price-change-reasons",
     )
     reasons: dict[str, str] = {}
     if llm_result and isinstance(llm_result.get("items"), list):

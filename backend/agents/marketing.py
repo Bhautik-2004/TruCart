@@ -88,6 +88,10 @@ def run_marketing_agent() -> dict[str, Any]:
                 '"segment": "target audience label"}.'
             ),
             user_prompt=str({"name": product["name"], "category": product["category"], "price": product["current_price"]}),
+            agent_name=AGENT_NAME,
+            correlation_id=correlation_id,
+            call_name="generate-campaign-copy",
+            trace_metadata={"sku": product["sku"]},
         )
         if llm_result:
             model_used = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")

@@ -3,19 +3,61 @@ import os
 from typing import Any
 from uuid import UUID, uuid4
 
-from openai import OpenAI
-
 from ..db import get_supabase
 
-_ollama_client: OpenAI | None = None
+_ollama_client: Any = None
+_ollama_client_traced = False
+_langfuse_disabled = False
 
 
-def get_ollama_client() -> OpenAI:
-    """Return a shared client pointed at Ollama's OpenAI-compatible endpoint."""
-    global _ollama_client
+def _langfuse_configured() -> bool:
+    return bool(os.getenv("LANGFUSE_PUBLIC_KEY", "").strip() and os.getenv("LANGFUSE_SECRET_KEY", "").strip())
+
+
+def get_langfuse_client() -> Any:
+    """Return the shared Langfuse client (via get_client()), or None if it
+    isn't configured. Missing keys or an SDK/init failure permanently
+    disables tracing for the rest of the process rather than raising — LLM
+    tracing must never be able to break an agent run.
+    """
+    global _langfuse_disabled
+    if _langfuse_disabled:
+        return None
+    if not _langfuse_configured():
+        _langfuse_disabled = True
+        return None
+    try:
+        from langfuse import get_client
+
+        return get_client()
+    except Exception:
+        _langfuse_disabled = True
+        return None
+
+
+def get_ollama_client() -> Any:
+    """Return a shared client pointed at Ollama's OpenAI-compatible endpoint.
+
+    When Langfuse is configured, this is Langfuse's OpenAI drop-in wrapper
+    (`langfuse.openai`), so every chat completion is automatically captured
+    as a generation — model, token usage, latency, and API errors — with no
+    manual span bookkeeping. Falls back to the plain OpenAI client when
+    Langfuse isn't configured. Per Langfuse's own guidance, the wrapped
+    client must be constructed only after env vars are loaded (main.py calls
+    load_dotenv() before this module is ever used).
+    """
+    global _ollama_client, _ollama_client_traced
     if _ollama_client is None:
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-        _ollama_client = OpenAI(base_url=f"{base_url}/v1", api_key="ollama")
+        if _langfuse_configured():
+            from langfuse.openai import openai as _openai_module
+
+            _ollama_client_traced = True
+        else:
+            import openai as _openai_module
+
+            _ollama_client_traced = False
+        _ollama_client = _openai_module.OpenAI(base_url=f"{base_url}/v1", api_key="ollama")
     return _ollama_client
 
 
@@ -23,13 +65,40 @@ def get_ollama_model() -> str:
     return os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
 
-def call_llm_json(system_prompt: str, user_prompt: str) -> dict[str, Any] | None:
+def call_llm_json(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    agent_name: str,
+    correlation_id: UUID | None = None,
+    call_name: str | None = None,
+    trace_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Ask the local model for a JSON object. Returns None on any failure
     (Ollama down, malformed output, etc.) so callers can fall back to a
     deterministic decision instead of crashing the agent run.
+
+    call_name should be a static, verb-first, descriptive action name (e.g.
+    "generate-restock-justifications") — never include a dynamic id (ticket
+    id, SKU, ...) in it, or every call becomes its own ungroupable name in
+    the Langfuse UI. Put per-call identifiers in trace_metadata instead.
+
+    If correlation_id is given and Langfuse is configured, the call is
+    wrapped in a Langfuse observation whose trace is keyed by
+    create_trace_id(seed=correlation_id) — the same id already written to
+    the Supabase agent_task_log row for this run, so both systems can be
+    cross-referenced by one id. Tracing is best-effort: any Langfuse failure
+    is swallowed and never affects this function's return value.
     """
-    try:
-        client = get_ollama_client()
+    name = call_name or "llm-call"
+    client = get_ollama_client()
+    langfuse = get_langfuse_client() if correlation_id is not None else None
+
+    def _run() -> dict[str, Any] | None:
+        extra: dict[str, Any] = {}
+        if _ollama_client_traced:
+            extra["name"] = name
+            extra["metadata"] = {"agent": agent_name, **(trace_metadata or {})}
         response = client.chat.completions.create(
             model=get_ollama_model(),
             messages=[
@@ -38,11 +107,48 @@ def call_llm_json(system_prompt: str, user_prompt: str) -> dict[str, Any] | None
             ],
             response_format={"type": "json_object"},
             temperature=0.2,
+            **extra,
         )
         content = response.choices[0].message.content
-        return json.loads(content) if content else None
+        if not content:
+            raise ValueError("Model returned empty output.")
+        return json.loads(content)
+
+    if langfuse is None:
+        try:
+            return _run()
+        except Exception:
+            return None
+
+    span_input = {"agent": agent_name, "call": name, **(trace_metadata or {})}
+    try:
+        from langfuse import propagate_attributes
+
+        trace_context = {"trace_id": langfuse.create_trace_id(seed=str(correlation_id))}
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name=name,
+            trace_context=trace_context,
+            input=span_input,
+            metadata={"agent": agent_name},
+        ) as span:
+            with propagate_attributes(tags=[agent_name]):
+                try:
+                    result = _run()
+                    span.update(output={"parsed": result} if result is not None else None)
+                    return result
+                except Exception as exc:
+                    try:
+                        langfuse.update_current_span(level="ERROR", status_message=str(exc))
+                    except Exception:
+                        pass
+                    return None
     except Exception:
-        return None
+        # Langfuse span setup itself failed — still make the underlying call.
+        try:
+            return _run()
+        except Exception:
+            return None
 
 
 def load_agent_config(agent_name: str) -> dict[str, Any]:

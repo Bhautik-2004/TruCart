@@ -3,14 +3,18 @@ import hmac
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Load env vars before importing anything that reads Langfuse/Ollama config
+# at call time (routers -> agents -> base.get_langfuse_client/get_ollama_client).
+load_dotenv(Path(__file__).parent.parent / ".env.local")
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .agents.base import get_langfuse_client
 from .db import get_supabase
 from .routers.agents import router as agents_router
-
-load_dotenv(Path(__file__).parent.parent / ".env.local")
 
 app = FastAPI(title="TruCart API", version="0.0.1")
 
@@ -23,6 +27,22 @@ app.add_middleware(
 )
 
 app.include_router(agents_router)
+
+
+@app.on_event("shutdown")
+def shutdown_langfuse():
+    """Flush buffered Langfuse traces before the process exits.
+
+    Long-running processes don't need to flush per-request (the SDK batches
+    in the background), but a graceful shutdown should still drain the
+    buffer so the last few traces from a demo/dev session aren't lost.
+    """
+    langfuse = get_langfuse_client()
+    if langfuse is not None:
+        try:
+            langfuse.shutdown()
+        except Exception:
+            pass
 
 
 class LoginRequest(BaseModel):

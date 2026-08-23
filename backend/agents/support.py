@@ -65,6 +65,10 @@ def run_support_agent() -> dict[str, Any]:
                 "category": ticket["category"],
                 "has_order": ticket["order_id"] is not None,
             }),
+            agent_name=AGENT_NAME,
+            correlation_id=correlation_id,
+            call_name="triage-support-ticket",
+            trace_metadata={"ticket_id": ticket["ticket_id"]},
         )
         if llm_result is None:
             llm_result = {"resolution_text": "Unable to auto-resolve; needs human review.", "confidence_score": 0.0, "refund_amount": None, "action": "escalate"}
