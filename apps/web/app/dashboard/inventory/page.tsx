@@ -8,7 +8,7 @@ export default async function InventoryPage() {
 
   const [productsResult, inventoryResult] = await Promise.all([
     supabase.from("products").select("product_id, sku, name, category, current_price, description, status"),
-    supabase.from("inventory").select("inventory_id, product_id, quantity_on_hand, reorder_point, quantity_reserved, last_restock_date, updated_at"),
+    supabase.from("inventory").select("inventory_id, product_id, warehouse_id, quantity_on_hand, reorder_point, quantity_reserved, last_restock_date, updated_at, warehouses(name)"),
   ])
 
   const products = productsResult.data || []

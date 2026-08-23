@@ -11,7 +11,7 @@ interface TaskLog { log_id: string; task_type: string; status: string; model_use
 
 const displayNames: Record<string, string> = { inventory_agent: "Inventory Agent", order_agent: "Orders Agent", support_agent: "Support Agent", pricing_agent: "Pricing Agent", marketing_agent: "Marketing Agent", logistics_agent: "Logistics Agent" }
 const descriptionMap: Record<string, string> = { inventory_agent: "Monitors stock levels and manages reorders.", order_agent: "Processes orders and handles status updates.", support_agent: "Responds to customer inquiries with AI support.", pricing_agent: "Adjusts prices dynamically for optimal revenue.", marketing_agent: "Manages campaigns and tracks performance.", logistics_agent: "Optimizes shipping routes and tracks deliveries." }
-const implementedAgents = new Set(["inventory_agent", "pricing_agent", "support_agent"])
+const implementedAgents = new Set(["inventory_agent", "pricing_agent", "support_agent", "order_agent", "marketing_agent", "logistics_agent"])
 
 export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
   const router = useRouter()

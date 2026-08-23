@@ -2,6 +2,9 @@ from fastapi import APIRouter, HTTPException
 
 from ..agents.base import log_task, new_correlation_id
 from ..agents.inventory import run_inventory_agent
+from ..agents.logistics import run_logistics_agent
+from ..agents.marketing import run_marketing_agent
+from ..agents.orders import run_order_agent
 from ..agents.pricing import run_pricing_agent
 from ..agents.support import run_support_agent
 
@@ -11,6 +14,9 @@ _RUNNERS = {
     "inventory_agent": run_inventory_agent,
     "pricing_agent": run_pricing_agent,
     "support_agent": run_support_agent,
+    "order_agent": run_order_agent,
+    "marketing_agent": run_marketing_agent,
+    "logistics_agent": run_logistics_agent,
 }
 
 

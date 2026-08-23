@@ -67,14 +67,18 @@ export async function insertTicket(data: {
   subject: string
   description: string
   priority: string
+  category: string
   customer_id: string
+  order_id: string | null
 }) {
   const supabase = getSupabase()
   const { error } = await supabase.from("support_tickets").insert({
     subject: data.subject,
     description: data.description,
     priority: data.priority,
+    category: data.category,
     customer_id: data.customer_id,
+    order_id: data.order_id || null,
     status: "open",
     assigned_to_agent: "support_agent",
   })
@@ -118,6 +122,7 @@ export async function insertCampaign(data: {
     content_body: data.content_body,
     content_subject: data.content_subject,
     status: "draft",
+    created_by_agent: "manual",
   })
   if (error) throw error
   revalidatePath("/dashboard/marketing")
@@ -129,6 +134,8 @@ export async function insertProduct(data: {
   category: string
   base_price: number
   current_price: number
+  cost_price: number
+  weight_kg: number | null
   description: string
 }) {
   const supabase = getSupabase()
@@ -138,7 +145,8 @@ export async function insertProduct(data: {
     category: data.category,
     base_price: data.base_price,
     current_price: data.current_price,
-    cost_price: data.base_price,
+    cost_price: data.cost_price,
+    weight_kg: data.weight_kg,
     description: data.description,
     status: "active",
   })

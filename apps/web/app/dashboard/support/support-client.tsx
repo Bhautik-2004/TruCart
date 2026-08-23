@@ -7,6 +7,7 @@ import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { MessageSquare, Clock, CheckCircle, AlertCircle, Search, Plus, ArrowRight } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
+import { SearchSelect } from "../components/search-select"
 import { updateTicketStatus, insertTicket, insertTicketMessage } from "../actions"
 
 interface Ticket {
@@ -23,7 +24,12 @@ interface Ticket {
   messages_count?: number
 }
 
-export default function SupportClient({ tickets }: { tickets: Ticket[] }) {
+interface CustomerOption { customer_id: string; full_name: string; email: string }
+interface OrderOption { order_id: string; order_number: string; customer_id: string }
+
+const CATEGORIES = ["shipping_delay", "defective", "wrong_item", "refund", "other"]
+
+export default function SupportClient({ tickets, customers, orders }: { tickets: Ticket[]; customers: CustomerOption[]; orders: OrderOption[] }) {
   const router = useRouter()
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -31,8 +37,17 @@ export default function SupportClient({ tickets }: { tickets: Ticket[] }) {
   const [priorityFilter, setPriorityFilter] = useState("all")
   const [showNew, setShowNew] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [form, setForm] = useState({ subject: "", description: "", priority: "medium", customer_id: "" })
+  const [form, setForm] = useState({ subject: "", description: "", priority: "medium", category: "other", customer_id: "", order_id: "" })
   const [replyContent, setReplyContent] = useState("")
+
+  const customerOptions = useMemo(
+    () => customers.map(c => ({ value: c.customer_id, label: c.full_name, sublabel: c.email })),
+    [customers]
+  )
+  const orderOptions = useMemo(
+    () => orders.filter(o => !form.customer_id || o.customer_id === form.customer_id).map(o => ({ value: o.order_id, label: o.order_number })),
+    [orders, form.customer_id]
+  )
 
   const filtered = useMemo(() => {
     return tickets.filter(t => {
@@ -57,10 +72,10 @@ export default function SupportClient({ tickets }: { tickets: Ticket[] }) {
     if (!form.subject.trim() || !form.customer_id.trim()) return
     setSubmitting(true)
     try {
-      await insertTicket(form)
+      await insertTicket({ ...form, order_id: form.order_id || null })
       router.refresh()
       setShowNew(false)
-      setForm({ subject: "", description: "", priority: "medium", customer_id: "" })
+      setForm({ subject: "", description: "", priority: "medium", category: "other", customer_id: "", order_id: "" })
     } catch (e) { console.error(e) }
     setSubmitting(false)
   }
@@ -99,11 +114,24 @@ export default function SupportClient({ tickets }: { tickets: Ticket[] }) {
           <CardContent className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2"><label className="text-sm font-medium">Subject *</label><Input placeholder="Ticket subject" value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} /></div>
-              <div className="space-y-2"><label className="text-sm font-medium">Customer ID *</label><Input placeholder="Customer UUID" value={form.customer_id} onChange={e => setForm(f => ({ ...f, customer_id: e.target.value }))} /></div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Customer *</label>
+                <SearchSelect options={customerOptions} value={form.customer_id} onChange={v => setForm(f => ({ ...f, customer_id: v, order_id: "" }))} placeholder="Search customer by name or email..." />
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Related Order (optional)</label>
+                <SearchSelect options={orderOptions} value={form.order_id} onChange={v => setForm(f => ({ ...f, order_id: v }))} placeholder={form.customer_id ? "Search this customer's orders..." : "Search order number..."} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Category</label>
+                <div className="flex flex-wrap gap-2">{CATEGORIES.map(c => (<Button key={c} type="button" variant={form.category === c ? "default" : "outline"} size="sm" onClick={() => setForm(f => ({ ...f, category: c }))}>{c.replace(/_/g, " ")}</Button>))}</div>
+              </div>
             </div>
             <div className="space-y-2"><label className="text-sm font-medium">Description</label><textarea className="w-full rounded-md border bg-transparent px-3 py-2 text-sm min-h-[80px]" placeholder="Describe the issue..." value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
-            <div className="space-y-2"><label className="text-sm font-medium">Priority</label><div className="flex gap-2">{["low", "medium", "high"].map(p => (<Button key={p} variant={form.priority === p ? "default" : "outline"} size="sm" onClick={() => setForm(f => ({ ...f, priority: p }))}>{p}</Button>))}</div></div>
-            <div className="flex gap-2"><Button onClick={handleCreate} disabled={submitting}>{submitting ? "Creating..." : "Create Ticket"}</Button><Button variant="outline" onClick={() => setShowNew(false)}>Cancel</Button></div>
+            <div className="space-y-2"><label className="text-sm font-medium">Priority</label><div className="flex gap-2">{["low", "medium", "high"].map(p => (<Button key={p} type="button" variant={form.priority === p ? "default" : "outline"} size="sm" onClick={() => setForm(f => ({ ...f, priority: p }))}>{p}</Button>))}</div></div>
+            <div className="flex gap-2"><Button onClick={handleCreate} disabled={submitting || !form.customer_id}>{submitting ? "Creating..." : "Create Ticket"}</Button><Button variant="outline" onClick={() => setShowNew(false)}>Cancel</Button></div>
           </CardContent>
         </Card>
       )}

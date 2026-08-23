@@ -28,7 +28,7 @@ export default function InventoryClient({ items }: { items: Item[] }) {
   const [statusFilter, setStatusFilter] = useState("all")
   const [showAdd, setShowAdd] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [form, setForm] = useState({ name: "", sku: "", category: "", base_price: "", current_price: "", description: "" })
+  const [form, setForm] = useState({ name: "", sku: "", category: "", base_price: "", current_price: "", cost_price: "", weight_kg: "", description: "" })
 
   const filtered = useMemo(() => {
     return items.filter(i => {
@@ -60,18 +60,20 @@ export default function InventoryClient({ items }: { items: Item[] }) {
   }
 
   async function handleAdd() {
-    if (!form.name.trim() || !form.sku.trim()) return
+    if (!form.name.trim() || !form.sku.trim() || !form.cost_price.trim()) return
     setSubmitting(true)
     try {
       await insertProduct({
         name: form.name, sku: form.sku, category: form.category,
         base_price: parseFloat(form.base_price) || 0,
         current_price: parseFloat(form.current_price) || 0,
+        cost_price: parseFloat(form.cost_price) || 0,
+        weight_kg: form.weight_kg ? parseFloat(form.weight_kg) : null,
         description: form.description,
       })
       router.refresh()
       setShowAdd(false)
-      setForm({ name: "", sku: "", category: "", base_price: "", current_price: "", description: "" })
+      setForm({ name: "", sku: "", category: "", base_price: "", current_price: "", cost_price: "", weight_kg: "", description: "" })
     } catch (e) { console.error(e) }
     setSubmitting(false)
   }
@@ -103,8 +105,12 @@ export default function InventoryClient({ items }: { items: Item[] }) {
               <div className="space-y-2"><label className="text-sm font-medium">Name *</label><Input placeholder="Product name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
               <div className="space-y-2"><label className="text-sm font-medium">SKU *</label><Input placeholder="SKU code" value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value }))} /></div>
             </div>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2"><label className="text-sm font-medium">Category</label><Input placeholder="Category" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} /></div>
+              <div className="space-y-2"><label className="text-sm font-medium">Weight (kg)</label><Input type="number" placeholder="0.00" value={form.weight_kg} onChange={e => setForm(f => ({ ...f, weight_kg: e.target.value }))} /></div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2"><label className="text-sm font-medium">Cost Price (₹) *</label><Input type="number" placeholder="0.00" value={form.cost_price} onChange={e => setForm(f => ({ ...f, cost_price: e.target.value }))} /></div>
               <div className="space-y-2"><label className="text-sm font-medium">Base Price (₹)</label><Input type="number" placeholder="0.00" value={form.base_price} onChange={e => setForm(f => ({ ...f, base_price: e.target.value }))} /></div>
               <div className="space-y-2"><label className="text-sm font-medium">Current Price (₹)</label><Input type="number" placeholder="0.00" value={form.current_price} onChange={e => setForm(f => ({ ...f, current_price: e.target.value }))} /></div>
             </div>

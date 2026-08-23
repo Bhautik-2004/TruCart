@@ -22,5 +22,17 @@ export default async function SupportPage() {
     })
   )
 
-  return <SupportClient tickets={ticketsWithCount} />
+  const { data: customers } = await supabase
+    .from("customers")
+    .select("customer_id, full_name, email")
+    .order("full_name")
+    .limit(1000)
+
+  const { data: orders } = await supabase
+    .from("orders")
+    .select("order_id, order_number, customer_id")
+    .order("placed_at", { ascending: false })
+    .limit(500)
+
+  return <SupportClient tickets={ticketsWithCount} customers={customers || []} orders={orders || []} />
 }
