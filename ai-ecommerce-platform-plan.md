@@ -1293,17 +1293,20 @@ If the hackathon extends beyond 48 hours, add these sprints:
 
 ### 13.1 Required Documents
 
+> Status update — the delivered docs describe the **built** system (Supabase +
+> FastAPI + free-tier stack), not this AWS design.
+
 | Document | Format | Location | Status |
 |---|---|---|---|
-| Architecture document | Markdown | `docs/architecture.md` | ☐ |
-| API specification | OpenAPI YAML | `docs/api-spec.yaml` | ☐ |
-| Database schema | SQL + ERD | `docs/db-schema.sql` | ☐ |
-| Cost estimation | Markdown | `docs/cost-estimation.md` | ☐ |
-| Deployment guide | Markdown | `docs/deployment-guide.md` | ☐ |
-| Presentation deck | PDF/PPTX | `docs/presentation.pdf` | ☐ |
-| Demo video | MP4 | `docs/demo-video.mp4` | ☐ |
-| README | Markdown | `README.md` | ☐ |
-| Agent design docs | Markdown | `docs/agents/` | ☐ |
+| Architecture document | Markdown | `docs/architecture.md` | ☑ (built-system architecture + Mermaid diagram) |
+| API specification | OpenAPI + Markdown | `docs/api-reference.md` (live `/openapi.json` from FastAPI) | ☑ |
+| Database schema | SQL + reference | `database/migrations/` + `database-schema-reference.md` (incl. 007–015 addendum) | ☑ |
+| Cost estimation | Markdown | `docs/cost-estimate.md` (**$0 / free-tier**) | ☑ |
+| Deployment guide | Markdown | `docs/deployment-guide.md` | ☑ (runbook; execution pending) |
+| Presentation deck | PDF/PPTX | — | ☐ still pending (outline in §12) |
+| Demo video | MP4 | — | ☐ |
+| README | Markdown | `README.md` + `docs/README.md` index | ☑ |
+| Agent design docs | Markdown | `docs/architecture.md` §3 + `README.md` agent table | ☑ |
 
 ### 13.2 README Template
 
@@ -1432,13 +1435,13 @@ If time is running short, cut features in this order (least to most critical):
 
 | Deliverable | Status | Location |
 |---|---|---|
-| Deployed web application | ☐ | CloudFront URL |
-| Cloud-deployed AI agents | ☐ | ECS Fargate cluster |
-| Solution architecture | ☐ | This document + `docs/architecture.md` |
-| DB schema | ☐ | Section 6 + `docs/db-schema.sql` |
-| Estimated costing | ☐ | Section 9 + `docs/cost-estimation.md` |
-| Presentation | ☐ | `docs/presentation.pdf` |
-| Project documentation | ☐ | `docs/` directory + README.md |
+| Deployed web application | ☐ | code complete; free-tier deploy pending — `docs/deployment-guide.md` |
+| Cloud-deployed AI agents | ☐ | code complete (6 agents + orchestrator + scheduler); deploy pending |
+| Solution architecture | ☑ | `docs/architecture.md` (built system + Mermaid) |
+| DB schema | ☑ | `database/migrations/` + `database-schema-reference.md` |
+| Estimated costing | ☑ | `docs/cost-estimate.md` — **$0 / free tier** |
+| Presentation | ☐ | outline only, §12 |
+| Project documentation | ☑ | `docs/` + `README.md` |
 
 ### 15.2 Bonus Deliverables (For Judges)
 

@@ -8,7 +8,7 @@ import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
 import { User, Bell, Shield, Palette, Globe, Save } from "lucide-react"
-import { updateStoreConfig } from "../actions"
+import { updateStoreConfig, updateProfileName, changePassword, deactivateAccount } from "../actions"
 
 export default function SettingsClient({ userName, userEmail, initialConfig }: { userName: string; userEmail: string; initialConfig: Record<string, string> }) {
   const router = useRouter()
@@ -31,10 +31,50 @@ export default function SettingsClient({ userName, userEmail, initialConfig }: {
     setToast({ message, type }); setTimeout(() => setToast(null), 3000)
   }
 
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [showPasswordForm, setShowPasswordForm] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
+
   async function saveProfile() {
     setSaving(true)
-    try { await updateStoreConfig("store_name", company); showToast("Profile saved") } catch { showToast("Failed to save", "error") }
+    try {
+      await Promise.all([
+        updateProfileName(name),
+        updateStoreConfig("store_name", company),
+      ])
+      showToast("Profile saved")
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Failed to save", "error")
+    }
     setSaving(false); router.refresh()
+  }
+
+  async function submitPasswordChange() {
+    if (newPassword.length < 8) { showToast("New password must be at least 8 characters", "error"); return }
+    if (newPassword !== confirmPassword) { showToast("Passwords do not match", "error"); return }
+    setChangingPassword(true)
+    try {
+      await changePassword(currentPassword, newPassword)
+      showToast("Password changed")
+      setShowPasswordForm(false)
+      setCurrentPassword(""); setNewPassword(""); setConfirmPassword("")
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not change password", "error")
+    }
+    setChangingPassword(false)
+  }
+
+  async function confirmDeleteAccount() {
+    if (!window.confirm("Deactivate your account? You will be signed out and unable to log back in until an administrator re-enables it.")) return
+    try {
+      await deactivateAccount()
+      await fetch("/api/auth/logout", { method: "POST" })
+      window.location.href = "/login"
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not deactivate account", "error")
+    }
   }
 
   async function saveRegional() {
@@ -105,10 +145,25 @@ export default function SettingsClient({ userName, userEmail, initialConfig }: {
           <Card>
             <CardHeader><div className="flex items-center gap-2"><Shield className="size-5" /><div><CardTitle>Security</CardTitle><CardDescription>Manage security settings</CardDescription></div></div></CardHeader>
             <CardContent className="space-y-4">
-              <Button variant="outline" className="w-full justify-start" onClick={() => showToast("Password change coming soon")}>Change Password</Button>
-              <Button variant="outline" className="w-full justify-start" onClick={() => showToast("2FA coming soon")}>Two-Factor Authentication</Button>
-              <Button variant="outline" className="w-full justify-start" onClick={() => showToast("API key management coming soon")}>API Keys</Button>
-              <Button variant="outline" className="w-full justify-start" onClick={() => showToast("Session history coming soon")}>Session History</Button>
+              {showPasswordForm ? (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <div className="space-y-2"><Label>Current Password</Label><Input type="password" autoComplete="current-password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></div>
+                  <div className="space-y-2"><Label>New Password</Label><Input type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Confirm New Password</Label><Input type="password" autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} /></div>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={submitPasswordChange} disabled={changingPassword}>{changingPassword ? "Saving..." : "Update Password"}</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setShowPasswordForm(false); setCurrentPassword(""); setNewPassword(""); setConfirmPassword("") }}>Cancel</Button>
+                  </div>
+                </div>
+              ) : (
+                <Button variant="outline" className="w-full justify-start" onClick={() => setShowPasswordForm(true)}>Change Password</Button>
+              )}
+              <div className="space-y-1 pt-1">
+                <Button variant="outline" className="w-full justify-start" disabled>Two-Factor Authentication</Button>
+                <Button variant="outline" className="w-full justify-start" disabled>API Keys</Button>
+                <Button variant="outline" className="w-full justify-start" disabled>Session History</Button>
+                <p className="text-xs text-muted-foreground">Not available in this build.</p>
+              </div>
             </CardContent>
           </Card>
 
@@ -120,9 +175,9 @@ export default function SettingsClient({ userName, userEmail, initialConfig }: {
           </Card>
 
           <Card className="border-destructive">
-            <CardHeader><CardTitle className="text-destructive">Danger Zone</CardTitle><CardDescription>Irreversible actions</CardDescription></CardHeader>
+            <CardHeader><CardTitle className="text-destructive">Danger Zone</CardTitle><CardDescription>Deactivates your account and signs you out</CardDescription></CardHeader>
             <CardContent>
-              <Button variant="destructive" className="w-full" onClick={() => { if (window.confirm("Delete your account? This cannot be undone.")) showToast("Account deletion requested", "error") }}>Delete Account</Button>
+              <Button variant="destructive" className="w-full" onClick={confirmDeleteAccount}>Deactivate Account</Button>
             </CardContent>
           </Card>
         </div>

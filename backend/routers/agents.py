@@ -11,6 +11,8 @@ from ..agents.orchestrator import run_orchestrator
 from ..agents.orders import run_order_agent
 from ..agents.pricing import run_pricing_agent
 from ..agents.support import run_support_agent
+from ..db import get_supabase
+from ..scheduler import scheduler_status
 
 logger = logging.getLogger("trucart.agents")
 
@@ -25,6 +27,30 @@ _RUNNERS = {
     "logistics_agent": run_logistics_agent,
     "orchestrator": run_orchestrator,
 }
+
+
+@router.get("/scheduler")
+def get_scheduler_status():
+    """Autonomous-mode status for the dashboard: whether the cron loop is on and
+    when the orchestrator last completed a cycle (manual or scheduled)."""
+    status = scheduler_status()
+    try:
+        last = (
+            get_supabase()
+            .table("agent_task_log")
+            .select("created_at, status")
+            .eq("agent_name", "orchestrator")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+        )
+        status["last_cycle_at"] = last[0]["created_at"] if last else None
+        status["last_cycle_status"] = last[0]["status"] if last else None
+    except Exception:
+        status["last_cycle_at"] = None
+        status["last_cycle_status"] = None
+    return status
 
 
 @router.post("/{agent_name}/run")

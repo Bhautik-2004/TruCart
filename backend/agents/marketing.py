@@ -10,6 +10,7 @@ from .base import (
     load_agent_config,
     log_task,
     new_correlation_id,
+    notify,
 )
 
 AGENT_NAME = "marketing_agent"
@@ -162,6 +163,13 @@ def run_marketing_agent(correlation_id=None) -> dict[str, Any]:
                 "revenue_attributed": 0,
             }).execute()
             auto_executed += 1
+            notify(
+                "Campaign launched",
+                f"Clearance campaign '{campaign_row['name']}' is live (budget ₹{budget:,.2f}).",
+                type="agent",
+                reference_id=campaign_id,
+                reference_type="campaign",
+            )
         else:
             escalated += 1
             enqueue_review(

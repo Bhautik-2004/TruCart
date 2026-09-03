@@ -1,0 +1,19 @@
+import { NextResponse } from "next/server"
+
+export async function POST(request: Request) {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"
+  const { searchParams } = new URL(request.url)
+  const count = searchParams.get("count") ?? "5"
+  const triggerAgents = searchParams.get("trigger_agents") ?? "false"
+
+  try {
+    const res = await fetch(
+      `${apiUrl}/api/simulate/orders?count=${encodeURIComponent(count)}&trigger_agents=${encodeURIComponent(triggerAgents)}`,
+      { method: "POST" },
+    )
+    const data = await res.json()
+    return NextResponse.json(data, { status: res.status })
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "backend unreachable" }, { status: 502 })
+  }
+}

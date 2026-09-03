@@ -12,9 +12,8 @@ export function LogoutButton() {
         try {
           await fetch("/api/auth/logout", { method: "POST" })
         } catch {
-          // ignore — still clear client state and redirect
+          // ignore — the redirect below still leaves the dashboard
         }
-        localStorage.removeItem("user")
         window.location.href = "/login"
       }}
     >

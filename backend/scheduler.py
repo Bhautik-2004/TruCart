@@ -13,6 +13,22 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _interval_minutes() -> float:
+    try:
+        return float(os.getenv("ORCHESTRATOR_INTERVAL_MINUTES", "10"))
+    except ValueError:
+        return 10.0
+
+
+def scheduler_status() -> dict:
+    """Config-level view of autonomous mode, for the dashboard indicator."""
+    return {
+        "enabled": _env_flag("SCHEDULER_ENABLED", False),
+        "running": _scheduler is not None,
+        "interval_minutes": _interval_minutes(),
+    }
+
+
 def start_scheduler():
     """Start the background orchestrator loop if SCHEDULER_ENABLED is set.
 
@@ -27,10 +43,7 @@ def start_scheduler():
         logger.info("scheduler disabled (set SCHEDULER_ENABLED=true to enable)")
         return None
 
-    try:
-        interval_minutes = float(os.getenv("ORCHESTRATOR_INTERVAL_MINUTES", "10"))
-    except ValueError:
-        interval_minutes = 10.0
+    interval_minutes = _interval_minutes()
 
     from apscheduler.schedulers.background import BackgroundScheduler
 

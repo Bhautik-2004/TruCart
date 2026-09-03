@@ -9,6 +9,32 @@ _ollama_client: Any = None
 _ollama_client_traced = False
 _langfuse_disabled = False
 
+# Token usage accumulated per (correlation_id, agent_name) between the LLM calls
+# an agent makes during one run and the single log_task() row it writes at the
+# end. Keyed by both ids because the orchestrator runs every agent under one
+# shared correlation_id. Drained by log_task().
+_run_token_usage: dict[tuple[str, str], int] = {}
+
+
+def _record_token_usage(correlation_id: UUID | None, agent_name: str, response: Any) -> None:
+    """Add this completion's total_tokens to the running tally for the agent."""
+    if correlation_id is None:
+        return
+    usage = getattr(response, "usage", None)
+    total = getattr(usage, "total_tokens", None) if usage is not None else None
+    if not total:
+        return
+    key = (str(correlation_id), agent_name)
+    _run_token_usage[key] = _run_token_usage.get(key, 0) + int(total)
+
+
+def collect_run_token_usage(correlation_id: UUID | None, agent_name: str) -> int | None:
+    """Pop the accumulated token count for one agent run. Returns None when the
+    agent made no (successful) LLM calls, so the column stays NULL rather than 0."""
+    if correlation_id is None:
+        return None
+    return _run_token_usage.pop((str(correlation_id), agent_name), None)
+
 
 def _langfuse_configured() -> bool:
     return bool(os.getenv("LANGFUSE_PUBLIC_KEY", "").strip() and os.getenv("LANGFUSE_SECRET_KEY", "").strip())
@@ -112,7 +138,9 @@ def call_llm_json(
         content = response.choices[0].message.content
         if not content:
             raise ValueError("Model returned empty output.")
-        return json.loads(content)
+        parsed = json.loads(content)
+        _record_token_usage(correlation_id, agent_name, response)
+        return parsed
 
     if langfuse is None:
         try:
@@ -187,8 +215,17 @@ def log_task(
     model_used: str | None = None,
     correlation_id: UUID | None = None,
     human_approved: bool = False,
+    tokens_used: int | None = None,
 ) -> str:
-    """Insert one row into agent_task_log for this run. Returns the log_id."""
+    """Insert one row into agent_task_log for this run. Returns the log_id.
+
+    tokens_used defaults to the total drained from the LLM calls this agent made
+    under correlation_id (see collect_run_token_usage); pass an explicit value to
+    override. cost_usd is left at the column default (0) — the agents run against
+    a local Ollama model, so there is no per-token cost to record.
+    """
+    if tokens_used is None:
+        tokens_used = collect_run_token_usage(correlation_id, agent_name)
     row = {
         "agent_name": agent_name,
         "task_type": task_type,
@@ -198,6 +235,7 @@ def log_task(
         "model_used": model_used,
         "correlation_id": str(correlation_id) if correlation_id else None,
         "human_approved": human_approved,
+        "tokens_used": tokens_used,
     }
     result = get_supabase().table("agent_task_log").insert(row).execute()
     return result.data[0]["log_id"]
@@ -220,7 +258,41 @@ def enqueue_review(
         "status": "pending",
     }
     result = get_supabase().table("review_queue").insert(row).execute()
-    return result.data[0]["review_id"]
+    review_id = result.data[0]["review_id"]
+    notify(
+        "Review needed",
+        f"{agent_name.replace('_', ' ')}: {summary}",
+        type="warning",
+        reference_id=review_id,
+        reference_type="review_queue",
+    )
+    return review_id
+
+
+def notify(
+    title: str,
+    message: str,
+    *,
+    type: str = "info",
+    reference_id: str | None = None,
+    reference_type: str | None = None,
+) -> None:
+    """Write one row to the notifications table (the dashboard bell / feed).
+
+    Best-effort: a notification must never break an agent run, so any failure is
+    swallowed. `type` matches the values the UI styles: info, success, warning,
+    order, agent, system.
+    """
+    try:
+        get_supabase().table("notifications").insert({
+            "title": title,
+            "message": message,
+            "type": type,
+            "reference_id": reference_id,
+            "reference_type": reference_type,
+        }).execute()
+    except Exception:
+        pass
 
 
 def new_correlation_id() -> UUID:

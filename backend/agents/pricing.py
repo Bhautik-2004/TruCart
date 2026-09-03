@@ -10,6 +10,7 @@ from .base import (
     load_agent_config,
     log_task,
     new_correlation_id,
+    notify,
 )
 
 AGENT_NAME = "pricing_agent"
@@ -404,6 +405,13 @@ def run_pricing_agent(correlation_id=None) -> dict[str, Any]:
             )
         else:
             auto_executed += 1  # price already applied by apply_price_change / fallback
+            notify(
+                "Price updated",
+                f"{product['name']}: ₹{current_price:,.2f} → ₹{proposed_price:,.2f} ({pct_change:+.1f}%).",
+                type="agent",
+                reference_id=history_id,
+                reference_type="price_history",
+            )
 
     summary = {"scanned": len(candidates), "auto_executed": auto_executed, "escalated": escalated}
     return _finish(

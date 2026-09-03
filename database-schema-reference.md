@@ -513,3 +513,37 @@ store_config           (standalone, global settings)
 8. Skim **LangGraph checkpoint tables** — just know they exist and are auto-managed.
 
 Once this makes sense, run `schema.sql` against your Postgres instance and you'll have a fully working database matching every table described here.
+
+---
+
+## Migrations 007–015 addendum (what post-dates the sections above)
+
+This reference was written against migrations 001–005. The live schema is
+`database/migrations/001…015` + `seed_data/00…22`. Changes since:
+
+| Migration | Effect |
+|---|---|
+| `007_notifications.sql` | **New table `notifications`** (`notification_id`, `title`, `message`, `type` default `info`, `is_read`, `reference_id`, `reference_type`, `created_at`). Populated at runtime by the agents' `notify()` helper (`backend/agents/base.py`) on key events — PO raised/received, order confirmed, shipment created/delivered/exception, price updated, ticket resolved/refunded, review enqueued — and surfaced on `/dashboard/notifications`. |
+| `008`, `010`, `014` | Reseed / retune `agent_config` rows to the canonical keys each agent's code actually reads (`model_name`, `max_items_per_run`, `budget_auto_approve_limit`, `overstock_multiplier`, `exception_after_days`, `transit_hours`, pricing cost/margin keys, `receiving_lead_days`). Approval **ceilings** stay in `store_config` (`po_auto_approve_limit`, `refund_auto_approve_limit`, `price_change_max_pct`). |
+| `009` | Drops the dead `updated_at` triggers on `purchase_orders` and `notifications` (neither table has that column). |
+| `011` | Prunes fabricated `agent_task_log` seed rows that referenced a non-existent `refund_agent`. |
+| `012_kb_match_fn.sql` | **RPC `match_knowledge_base(query_embedding, match_count)`** — cosine vector search over `knowledge_base.embedding` for support-agent RAG. |
+| `013_agent_rpcs.sql` | **RPCs** `apply_price_change(...)` (writes `price_history`, optionally updates `products.current_price`), `create_po_with_review(...)` (atomic `purchase_orders` + `review_queue` insert), `confirm_order_and_reserve(p_order_id)` (atomic reserve-all-then-confirm, rolls back on shortage). |
+| `015_pricing_demo_signals.sql` | Injects a small fixed set of recent `PO-DEMO-*` purchase orders whose `unit_cost` diverges from `cost_price`, so the cost/margin pricing agent has visible work on a first run. Seeded demo signal, not real data. |
+
+Also note:
+
+- `agent_task_log.tokens_used` **is now populated** — `call_llm_json` accumulates
+  `response.usage.total_tokens` per run and `log_task()` writes it. `cost_usd`
+  stays 0 (local/free model).
+- `purchase_orders.status` lifecycle used by the agents: `draft` → `approved`
+  (auto or via review) → `received` (inventory agent's receiving step increments
+  `inventory.quantity_on_hand`) ; or `rejected` / `cancelled`.
+- `review_queue` rows now record `reviewed_by` (session user) and `review_note`
+  when actioned from `/dashboard/review`.
+
+### Not applicable to this build
+The **"LangGraph Checkpoint Tables"** section above describes the aspirational
+AWS/LangGraph design. This implementation uses a plain sequential orchestrator
+(`backend/agents/orchestrator.py`) with no checkpointer, so those tables are not
+created.

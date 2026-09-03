@@ -4,16 +4,23 @@ import { useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@workspace/ui/components/card"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
 import { Bot, Settings, Activity, Zap, Clock, CheckCircle, AlertCircle, Play, Loader2 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
+import { updateAgentConfig } from "../actions"
 
 interface TaskLog { log_id: string; task_type: string; status: string; model_used: string; tokens_used: number; created_at: string; agent_name: string }
+interface AgentConfigRow { agent_name: string; config_key: string; config_value: unknown }
+interface SchedulerStatus { enabled: boolean; running: boolean; interval_minutes: number; last_cycle_at: string | null; last_cycle_status: string | null }
 
 const displayNames: Record<string, string> = { inventory_agent: "Inventory Agent", order_agent: "Orders Agent", support_agent: "Support Agent", pricing_agent: "Pricing Agent", marketing_agent: "Marketing Agent", logistics_agent: "Logistics Agent" }
 const descriptionMap: Record<string, string> = { inventory_agent: "Monitors stock levels and manages reorders.", order_agent: "Processes orders and handles status updates.", support_agent: "Responds to customer inquiries with AI support.", pricing_agent: "Adjusts prices dynamically for optimal revenue.", marketing_agent: "Manages campaigns and tracks performance.", logistics_agent: "Optimizes shipping routes and tracks deliveries." }
-const implementedAgents = new Set(["inventory_agent", "pricing_agent", "support_agent", "order_agent", "marketing_agent", "logistics_agent"])
 
-export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
+function configValueToInput(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value)
+}
+
+export default function AgentsClient({ taskLogs, agentConfig, scheduler }: { taskLogs: TaskLog[]; agentConfig: AgentConfigRow[]; scheduler: SchedulerStatus | null }) {
   const router = useRouter()
   const [selectedAgent, setSelectedAgent] = useState<{ name: string; logs: TaskLog[]; stats: { total: number; completed: number; errors: number; accuracy: number; lastActive: string; status: string } } | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -21,6 +28,34 @@ export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
   const [runningAgent, setRunningAgent] = useState<string | null>(null)
   const [runningCycle, setRunningCycle] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [configOpen, setConfigOpen] = useState(false)
+  const [configDraft, setConfigDraft] = useState<Record<string, string>>({})
+  const [savingConfigKey, setSavingConfigKey] = useState<string | null>(null)
+
+  const configByAgent = useMemo(() => {
+    const map = new Map<string, AgentConfigRow[]>()
+    for (const row of agentConfig) {
+      if (!map.has(row.agent_name)) map.set(row.agent_name, [])
+      map.get(row.agent_name)!.push(row)
+    }
+    return map
+  }, [agentConfig])
+
+  async function handleSaveConfig(agentName: string, key: string, current: unknown) {
+    const draftKey = `${agentName}.${key}`
+    const raw = configDraft[draftKey] ?? configValueToInput(current)
+    setSavingConfigKey(draftKey)
+    try {
+      await updateAgentConfig(agentName, key, raw)
+      setToast(`${displayNames[agentName] || agentName}: ${key} saved.`)
+      router.refresh()
+    } catch (error) {
+      setToast(`Could not save ${key}: ${error instanceof Error ? error.message : "unknown error"}`)
+    } finally {
+      setSavingConfigKey(null)
+      setTimeout(() => setToast(null), 4000)
+    }
+  }
 
   async function handleRun(agentName: string) {
     setRunningAgent(agentName)
@@ -105,14 +140,56 @@ export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
       {toast && <div className="fixed top-4 right-4 z-50 rounded-lg bg-green-600 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
 
       <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold tracking-tight">Agents</h2><p className="text-muted-foreground">Monitor and manage your AI-powered agents.</p></div>
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Agents</h2>
+          <p className="text-muted-foreground">Monitor and manage your AI-powered agents.</p>
+          {scheduler && (
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className={`inline-block size-2 rounded-full ${scheduler.enabled ? "bg-green-500" : "bg-muted-foreground/40"}`} />
+              Autonomous mode {scheduler.enabled ? `on — every ${scheduler.interval_minutes} min` : "off (manual runs)"}
+              {scheduler.last_cycle_at && ` · last cycle ${new Date(scheduler.last_cycle_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+            </p>
+          )}
+        </div>
         <div className="flex gap-2">
           <Button onClick={handleRunCycle} disabled={runningCycle}>
             {runningCycle ? (<><Loader2 className="mr-2 size-4 animate-spin" />Running cycle...</>) : (<><Play className="mr-2 size-4" />Run full cycle</>)}
           </Button>
-          <Button variant="outline" onClick={() => alert("Agent configuration coming soon")}><Settings className="mr-2 size-4" />Configure</Button>
+          <Button variant="outline" onClick={() => setConfigOpen(o => !o)}><Settings className="mr-2 size-4" />{configOpen ? "Hide config" : "Configure"}</Button>
         </div>
       </div>
+
+      {configOpen && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Agent configuration</CardTitle></CardHeader>
+          <CardContent className="space-y-6">
+            {agentConfig.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No agent_config rows found.</p>
+            ) : [...configByAgent.entries()].map(([agentName, rows]) => (
+              <div key={agentName} className="space-y-2">
+                <p className="text-sm font-semibold">{displayNames[agentName] || agentName}</p>
+                {rows.map(row => {
+                  const draftKey = `${agentName}.${row.config_key}`
+                  return (
+                    <div key={draftKey} className="flex items-center gap-2">
+                      <span className="w-56 shrink-0 text-xs text-muted-foreground">{row.config_key}</span>
+                      <Input
+                        className="h-8 font-mono text-xs"
+                        value={configDraft[draftKey] ?? configValueToInput(row.config_value)}
+                        onChange={e => setConfigDraft(d => ({ ...d, [draftKey]: e.target.value }))}
+                      />
+                      <Button size="sm" variant="outline" disabled={savingConfigKey === draftKey} onClick={() => handleSaveConfig(agentName, row.config_key, row.config_value)}>
+                        {savingConfigKey === draftKey ? "..." : "Save"}
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">Values are JSON literals — numbers and booleans as-is, text may be entered without quotes.</p>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {stats.map(s => (
@@ -144,9 +221,8 @@ export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
               <Button
                 size="sm"
                 className="w-full"
-                disabled={!implementedAgents.has(agent.name) || runningAgent === agent.name}
+                disabled={runningAgent === agent.name}
                 onClick={() => handleRun(agent.name)}
-                title={implementedAgents.has(agent.name) ? undefined : "Backend not implemented yet"}
               >
                 {runningAgent === agent.name ? (<><Loader2 className="mr-1 size-3 animate-spin" />Running...</>) : (<><Play className="mr-1 size-3" />Run Agent</>)}
               </Button>

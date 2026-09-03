@@ -12,11 +12,13 @@ interface Shipment {
   orders?: { order_number: string; shipping_address_id: string }
 }
 
+// Keys must match the carrier strings emitted by the logistics agent
+// (backend/agents/logistics.py `_CARRIERS`).
 const carrierUrls: Record<string, string> = {
   "Delhivery": "https://www.delhivery.com/track-package/",
-  "Blue Dart": "https://www.bluedart.com/tracking/",
+  "BlueDart": "https://www.bluedart.com/tracking/",
   "DTDC": "https://www.dtdc.in/tracking",
-  "Shiprocket": "https://shiprocket.co/tracking/",
+  "FedEx": "https://www.fedex.com/fedextrack/?trknbr=",
 }
 
 export default function LogisticsClient({ shipments }: { shipments: Shipment[] }) {

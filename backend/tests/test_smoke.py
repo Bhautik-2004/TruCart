@@ -111,3 +111,25 @@ def test_orchestrator_runs_full_pipeline(fake_db):
     assert result["agent_name"] == "orchestrator"
     assert len(result["agents"]) == 6
     assert set(result["summary"]) == {"scanned", "auto_executed", "escalated"}
+
+
+def test_app_registers_expected_routes():
+    from backend.main import app
+
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/api/agents/{agent_name}/run" in paths
+    assert "/api/agents/scheduler" in paths
+    assert "/api/simulate/orders" in paths
+    assert "/api/auth/change-password" in paths
+
+
+def test_notify_is_best_effort(monkeypatch):
+    """notify() must never raise even when the DB call fails."""
+    import backend.agents.base as base
+
+    class Boom:
+        def table(self, *a, **k):
+            raise RuntimeError("db down")
+
+    monkeypatch.setattr(base, "get_supabase", lambda: Boom())
+    base.notify("t", "m", type="info")  # should not raise

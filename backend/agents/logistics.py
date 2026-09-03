@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from ..db import get_supabase
-from .base import enqueue_review, load_agent_config, log_task, new_correlation_id
+from .base import enqueue_review, load_agent_config, log_task, new_correlation_id, notify
 
 AGENT_NAME = "logistics_agent"
 
@@ -63,6 +63,13 @@ def run_logistics_agent(correlation_id=None) -> dict[str, Any]:
         ).execute()
         auto_executed += 1
         outcomes.append({"order_id": order["order_id"], "action": "shipment_created", "carrier": carrier})
+        notify(
+            "Shipment created",
+            f"Order {order['order_number']} handed to {carrier}.",
+            type="success",
+            reference_id=order["order_id"],
+            reference_type="shipment",
+        )
 
     # 2. Progress label_created shipments to in_transit once they have dwelt in
     #    that state for transit_hours (not unconditionally on every run).
@@ -124,6 +131,13 @@ def run_logistics_agent(correlation_id=None) -> dict[str, Any]:
         ).execute()
         auto_executed += 1
         outcomes.append({"shipment_id": shipment["shipment_id"], "action": "delivered"})
+        notify(
+            "Order delivered",
+            "A shipment was marked delivered.",
+            type="success",
+            reference_id=shipment["shipment_id"],
+            reference_type="shipment",
+        )
 
     # 4. Flag stalled in-transit shipments as exceptions.
     cutoff = (now - timedelta(days=exception_after_days)).isoformat()
@@ -155,6 +169,13 @@ def run_logistics_agent(correlation_id=None) -> dict[str, Any]:
             },
         )
         outcomes.append({"shipment_id": shipment["shipment_id"], "action": "flagged_exception"})
+        notify(
+            "Shipment exception",
+            f"Shipment {shipment['tracking_number']} stalled in transit — flagged for review.",
+            type="warning",
+            reference_id=shipment["shipment_id"],
+            reference_type="shipment",
+        )
 
     scanned = (
         len(confirmed_orders) + len(label_created) + len(to_out_for_delivery)

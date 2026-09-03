@@ -7,6 +7,7 @@
     "dev": "turbo dev",
     "dev:python": "uvicorn backend.main:app --reload --port 8000",
     "dev:all": "concurrently -n next,python -c blue,green \"npm run dev\" \"npm run dev:python\"",
+    "seed:rag": "python -m backend.scripts.backfill_kb_embeddings",
     "lint": "turbo lint",
     "format": "turbo format",
     "typecheck": "turbo typecheck"

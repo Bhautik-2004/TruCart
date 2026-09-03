@@ -34,8 +34,8 @@ export function LoginForm({
         return
       }
 
-      const data = await res.json()
-      localStorage.setItem("user", JSON.stringify(data.user))
+      // Session is held in the httpOnly `trucart_session` cookie set by the
+      // /api/auth/login route; middleware.ts gates the dashboard on it.
       window.location.assign("/dashboard")
     } catch {
       setError("Could not reach the server. Please try again.")

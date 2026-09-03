@@ -18,6 +18,8 @@ import {
   Search,
   Download,
   ExternalLink,
+  Sparkles,
+  Loader2,
 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
 import { exportToCSV } from "../../../lib/export-csv"
@@ -41,6 +43,27 @@ export default function OrdersClient({ orders }: { orders: Order[] }) {
   const [sheetOpen, setSheetOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
+  const [simulating, setSimulating] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  async function handleSimulate() {
+    setSimulating(true)
+    try {
+      const res = await fetch("/api/simulate/orders?count=5", { method: "POST" })
+      const data = await res.json()
+      if (!res.ok || data.status === "error") {
+        setToast(`Simulation failed: ${data.detail || data.error || "unknown error"}`)
+      } else {
+        setToast(`Created ${data.created} order(s)${data.new_customers ? ` and ${data.new_customers} new customer(s)` : ""}.`)
+        router.refresh()
+      }
+    } catch (error) {
+      setToast(`Simulation failed: ${error instanceof Error ? error.message : "backend unreachable"}`)
+    } finally {
+      setSimulating(false)
+      setTimeout(() => setToast(null), 5000)
+    }
+  }
 
   const filtered = useMemo(() => {
     return orders.filter(o => {
@@ -106,14 +129,22 @@ export default function OrdersClient({ orders }: { orders: Order[] }) {
 
   return (
     <div className="space-y-6">
+      {toast && <div className="fixed top-4 right-4 z-50 rounded-lg bg-green-600 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Orders</h2>
           <p className="text-muted-foreground">Manage and track all customer orders.</p>
         </div>
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="mr-2 size-4" />Export
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleSimulate} disabled={simulating}>
+            {simulating ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Sparkles className="mr-2 size-4" />}
+            {simulating ? "Simulating..." : "Simulate incoming orders"}
+          </Button>
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="mr-2 size-4" />Export
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

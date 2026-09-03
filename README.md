@@ -14,9 +14,9 @@ Demo scenario: **TechBazaar**, a fictional Indian electronics retailer.
 | Layer | Tech | Notes |
 |---|---|---|
 | Dashboard | Next.js 16 (App Router) + shadcn/ui, in `apps/web` | Server components read Supabase directly; server actions for mutations. |
-| Backend | FastAPI, in `backend/` | One login endpoint + `POST /api/agents/{name}/run`. |
-| Database | Supabase Postgres | Schema + seed as raw SQL in `database/migrations/`. RLS policies defined (see limitations). |
-| LLM | Local **Ollama** (`qwen2.5:7b`) via the OpenAI-compatible API | One JSON call per agent run. |
+| Backend | FastAPI, in `backend/` | Auth + `POST /api/agents/{name}/run` + orchestrator + `POST /api/simulate/orders`. Optional APScheduler loop. |
+| Database | Supabase Postgres | Schema + seed as raw SQL in `database/migrations/` (001–015). RLS policies defined (see limitations). |
+| LLM | Local **Ollama** (`qwen2.5:7b`) via the OpenAI-compatible API, or any free OpenAI-compatible endpoint | One JSON call per agent run; deterministic fallback if unreachable. |
 | Tracing | **Langfuse** (optional) | Best-effort; if keys are unset, agents run with tracing silently disabled. |
 
 ### The six agents (`backend/agents/`)
@@ -32,7 +32,18 @@ Demo scenario: **TechBazaar**, a fictional Indian electronics retailer.
 
 Guardrail thresholds live in the `store_config` table
 (`po_auto_approve_limit`, `refund_auto_approve_limit`, `price_change_max_pct`); per-agent knobs
-live in `agent_config`.
+live in `agent_config` (editable at `/dashboard/agents` → Configure).
+
+---
+
+## Documentation
+
+Full docs are in [`docs/`](docs/README.md):
+[architecture](docs/architecture.md) (with diagram) ·
+[cost estimate](docs/cost-estimate.md) (**$0 / free-tier**) ·
+[API reference](docs/api-reference.md) ·
+[deployment guide](docs/deployment-guide.md) ·
+[DB schema reference](database-schema-reference.md).
 
 ---
 
@@ -40,23 +51,30 @@ live in `agent_config`.
 
 This is a time-boxed build. The following are **deliberately simulated**, not integrated:
 
-- **Agents run on demand**, from the "Run Agent" button on `/dashboard/agents`. There is no
-  scheduler yet, so "autonomous / 24-7" describes the intended operating mode, not this build.
-- **No orchestrator.** Each agent runs independently; they do not call each other.
-- **Pricing** uses `products.cost_price` and the most recent `approved`/`received` purchase
-  order as the cost basis; it does not itself update `cost_price` when stock is received.
+- **Orders enter via a simulator.** There is no storefront/checkout; the "Simulate incoming
+  orders" button on `/dashboard/orders` (`POST /api/simulate/orders`) inserts realistic
+  orders for the agents to act on.
+- **Autonomy** is a fixed-interval orchestrator cycle (`backend/scheduler.py`, enabled with
+  `SCHEDULER_ENABLED=true`); there is no event-driven triggering. Agents also run on demand
+  from `/dashboard/agents`.
 - **Logistics** invents carrier, tracking number, and a flat shipping cost — no carrier API.
   Lifecycle transitions are time-driven (`transit_hours`), not carrier events.
-- **Inventory** still orders a fixed `reorder_quantity` (not demand-derived), and an
-  auto-approved PO does not itself increment stock. **Marketing** detects overstock with a
-  coarse `on_hand > reorder_point × multiplier` test and may promote a product the pricing
-  agent has just marked down in the same cycle.
-- **Marketing** "sends" a campaign by inserting a row — no email service.
-- **Support refunds** flip `orders.status`/`payment_status` — no payment gateway.
+- **Inventory** orders a fixed `reorder_quantity` (not demand-derived). It *does* now receive
+  approved POs after `receiving_lead_days` and increment on-hand stock, but does not update
+  `products.cost_price`. **Marketing** detects overstock with a coarse
+  `on_hand > reorder_point × multiplier` test.
+- **Marketing** "sends" a campaign by inserting a row — no email service. Campaign metrics
+  are fabricated.
+- **Support refunds** flip `orders.status`/`payment_status` — no payment gateway; refunds are
+  whole-order only (no partial / RMA).
+- **Customer notifications** are internal only — the `notifications` feed on the dashboard;
+  no outbound email/SMS to customers.
 - **RAG:** the support agent retrieves from `knowledge_base` (pgvector) before triaging,
   but only after you run the embedding backfill; without it, it triages with no context.
-- **Auth** is a login endpoint + a client-side check; it is not a hardened session yet, and the
-  backend uses the Supabase service-role key (RLS is bypassed server-side).
+- **Auth** is a signed httpOnly-cookie session (`jose` HS256, verified in `middleware.ts`)
+  with password change and account deactivation; there is no signup, MFA, or session
+  revocation store. The backend uses the Supabase service-role key (RLS bypassed
+  server-side), so it must sit behind the web proxy in a real deployment.
 - Some seed tables (`agent_task_log`, `agent_config`, `notifications`) contain generated demo
   rows; treat historical numbers there as illustrative.
 
@@ -99,17 +117,18 @@ In the Supabase SQL editor, run in order:
 2. every file in `database/migrations/seed_data/` in numeric order (`00_*` … `22_*`)
 3. `database/migrations/006_*.sql` … `015_*.sql`
 
-The seeded admin is `admin@techbazaar.local`. Its password hash in the seed is a placeholder —
-replace it with a real bcrypt hash to log in:
+The seeded admin is `admin@techbazaar.local` with password `trucart-demo` (a real
+bcrypt hash ships in the seed, so you can log in immediately). To use a different
+password, regenerate the hash and paste it into both
+`database/migrations/005_seed_data.sql` and
+`database/migrations/seed_data/02_users.sql`, then re-run that insert:
 ```bash
-python -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt()).decode())"
+python -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt(rounds=10)).decode())"
 ```
-Paste the result into `database/migrations/005_seed_data.sql` and
-`database/migrations/seed_data/02_users.sql`, then re-run that insert.
 
 Then embed the knowledge base for support-agent RAG (one-off, needs Ollama running):
 ```bash
-python -m backend.scripts.backfill_kb_embeddings
+npm run seed:rag   # = python -m backend.scripts.backfill_kb_embeddings
 ```
 
 ### 4. Run
@@ -130,9 +149,12 @@ apps/web/          Next.js dashboard
   app/dashboard/   one folder per screen (page.tsx = server fetch, *-client.tsx = UI)
   app/api/         thin route handlers (agent-run proxy is the one the UI uses)
 backend/
-  main.py          FastAPI app + /api/auth/login
-  routers/agents.py  POST /api/agents/{name}/run
-  agents/          one module per agent + base.py (LLM, Langfuse, DB helpers)
-database/migrations/  numbered schema + seed SQL
-packages/ui/       shared shadcn component library
+  main.py            FastAPI app + auth endpoints
+  routers/agents.py    POST /api/agents/{name}/run, GET /api/agents/scheduler
+  routers/simulate.py  POST /api/simulate/orders  (synthetic order intake)
+  agents/            one module per agent + orchestrator.py + base.py
+  scheduler.py       APScheduler orchestrator loop (SCHEDULER_ENABLED)
+database/migrations/  numbered schema + seed SQL (001–015)
+docs/                architecture, cost, API, deployment
+packages/ui/         shared shadcn component library
 ```

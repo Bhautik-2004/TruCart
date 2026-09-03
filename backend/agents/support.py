@@ -10,6 +10,7 @@ from .base import (
     load_agent_config,
     log_task,
     new_correlation_id,
+    notify,
 )
 from .rag import format_context, retrieve
 
@@ -131,6 +132,13 @@ def run_support_agent(correlation_id=None) -> dict[str, Any]:
             }).eq("ticket_id", ticket["ticket_id"]).execute()
             auto_executed += 1
             outcomes.append({"ticket_id": ticket["ticket_id"], "action": "resolved", "kb_ids": kb_ids})
+            notify(
+                "Support ticket resolved",
+                f"Auto-resolved: {ticket['subject']}",
+                type="success",
+                reference_id=ticket["ticket_id"],
+                reference_type="support_ticket",
+            )
 
         elif action == "refund":
             order_row = (
@@ -178,6 +186,13 @@ def run_support_agent(correlation_id=None) -> dict[str, Any]:
                 }).eq("ticket_id", ticket["ticket_id"]).execute()
                 auto_executed += 1
                 outcomes.append({"ticket_id": ticket["ticket_id"], "action": "refunded", "amount": refund_amount, "requested": requested_amount, "order_total": order_total, "kb_ids": kb_ids})
+                notify(
+                    "Refund auto-approved",
+                    f"₹{refund_amount:,.2f} refunded for ticket: {ticket['subject']}",
+                    type="success",
+                    reference_id=ticket["ticket_id"],
+                    reference_type="support_ticket",
+                )
             else:
                 escalated += 1
                 enqueue_review(

@@ -10,6 +10,7 @@ from .base import (
     load_agent_config,
     log_task,
     new_correlation_id,
+    notify,
 )
 
 AGENT_NAME = "inventory_agent"
@@ -19,12 +20,62 @@ def _generate_po_number() -> str:
     return f"PO-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
 
 
+def _receive_due_purchase_orders(supabase: Any, receiving_lead_days: float, max_items: int) -> list[dict[str, Any]]:
+    """Close the restock loop: approved POs whose lead time has elapsed are
+    marked 'received' and their quantity is added to on-hand stock. Without this
+    step nothing ever increases quantity_on_hand and every restocked product
+    stays permanently below its reorder point.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=receiving_lead_days)).isoformat()
+    due = (
+        supabase.table("purchase_orders")
+        .select("po_id, po_number, product_id, quantity")
+        .eq("status", "approved")
+        .lt("approved_at", cutoff)
+        .limit(max_items)
+        .execute()
+        .data
+        or []
+    )
+    received: list[dict[str, Any]] = []
+    today_iso = date.today().isoformat()
+    for po in due:
+        inv = (
+            supabase.table("inventory")
+            .select("inventory_id, quantity_on_hand")
+            .eq("product_id", po["product_id"])
+            .limit(1)
+            .execute()
+            .data
+        )
+        if not inv:
+            continue
+        new_on_hand = inv[0]["quantity_on_hand"] + po["quantity"]
+        supabase.table("inventory").update(
+            {"quantity_on_hand": new_on_hand, "last_restock_date": today_iso}
+        ).eq("inventory_id", inv[0]["inventory_id"]).execute()
+        supabase.table("purchase_orders").update({"status": "received"}).eq("po_id", po["po_id"]).execute()
+        received.append({"po_id": po["po_id"], "po_number": po["po_number"], "quantity": po["quantity"]})
+        notify(
+            "Stock received",
+            f"{po['po_number']}: {po['quantity']} units received into inventory.",
+            type="success",
+            reference_id=po["po_id"],
+            reference_type="purchase_order",
+        )
+    return received
+
+
 def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
     supabase = get_supabase()
     config = load_agent_config(AGENT_NAME)
     max_items = int(config.get("max_items_per_run", 5))
+    receiving_lead_days = float(config.get("receiving_lead_days", 2))
     po_auto_approve_limit = float(get_store_config("po_auto_approve_limit", 5000))
     correlation_id = correlation_id or new_correlation_id()
+
+    # Step 0: receive any approved POs whose lead time has elapsed.
+    received = _receive_due_purchase_orders(supabase, receiving_lead_days, max_items)
 
     inventory_result = (
         supabase.table("inventory")
@@ -58,11 +109,12 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
         log_id = log_task(
             AGENT_NAME, "stock_check", "completed",
             input_data={"scanned": len(inventory_result.data or [])},
-            output_data={"scanned": len(inventory_result.data or []), "auto_approved": 0, "escalated": 0},
+            output_data={"scanned": len(inventory_result.data or []), "auto_approved": 0, "escalated": 0, "received": received},
             model_used=None, correlation_id=correlation_id,
         )
         return {"status": "completed", "agent_name": AGENT_NAME, "log_id": log_id,
-                "correlation_id": str(correlation_id), "summary": {"scanned": 0, "auto_executed": 0, "escalated": 0}}
+                "correlation_id": str(correlation_id),
+                "summary": {"scanned": 0, "auto_executed": len(received), "escalated": 0}}
 
     product_ids = [c["product_id"] for c in candidates]
     products = {
@@ -158,6 +210,13 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
             po_id = supabase.table("purchase_orders").insert(po_row).execute().data[0]["po_id"]
 
         po_results.append({"po_id": po_id, "po_number": po_number, "status": "approved" if under_limit else "draft", "total_cost": total_cost})
+        notify(
+            "Purchase order raised" if under_limit else "Purchase order needs approval",
+            f"{po_number}: {quantity} units of {product['name']} — ₹{total_cost:,.2f}.",
+            type="agent" if under_limit else "warning",
+            reference_id=po_id,
+            reference_type="purchase_order",
+        )
 
         if under_limit:
             auto_approved += 1
@@ -175,7 +234,7 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
     log_id = log_task(
         AGENT_NAME, "stock_reconciliation", "completed",
         input_data={"scanned": len(inventory_result.data or []), "candidates": len(candidates)},
-        output_data={"purchase_orders": po_results, "auto_approved": auto_approved, "escalated": escalated},
+        output_data={"purchase_orders": po_results, "auto_approved": auto_approved, "escalated": escalated, "received": received},
         model_used=None if llm_result is None else os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
         correlation_id=correlation_id,
     )
@@ -185,5 +244,5 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
         "agent_name": AGENT_NAME,
         "log_id": log_id,
         "correlation_id": str(correlation_id),
-        "summary": {"scanned": len(candidates), "auto_executed": auto_approved, "escalated": escalated},
+        "summary": {"scanned": len(candidates), "auto_executed": auto_approved + len(received), "escalated": escalated},
     }

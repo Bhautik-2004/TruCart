@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from .agents.base import get_langfuse_client
 from .db import get_supabase
 from .routers.agents import router as agents_router
+from .routers.simulate import router as simulate_router
 from .scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -51,11 +52,18 @@ app.add_middleware(
 )
 
 app.include_router(agents_router)
+app.include_router(simulate_router)
 
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    user_id: str
+    current_password: str
+    new_password: str
 
 
 # Simple in-memory login throttle: max attempts per (email, ip) per window.
@@ -69,6 +77,13 @@ def _is_rate_limited(key: str) -> bool:
     recent = [t for t in _login_attempts[key] if now - t < _LOGIN_WINDOW_S]
     _login_attempts[key] = recent
     return len(recent) >= _LOGIN_MAX_ATTEMPTS
+
+
+def hash_password(password: str) -> str:
+    """Produce a bcrypt hash (cost 10) matching the seed data's scheme."""
+    import bcrypt
+
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=10)).decode("utf-8")
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
@@ -133,3 +148,28 @@ def login(body: LoginRequest, request: Request):
             "role": user["role"],
         },
     }
+
+
+@app.post("/api/auth/change-password")
+def change_password(body: ChangePasswordRequest):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters.")
+
+    result = (
+        get_supabase()
+        .table("users")
+        .select("*")
+        .eq("user_id", body.user_id)
+        .maybe_single()
+        .execute()
+    )
+    user = result.data
+    if not user or not verify_password(body.current_password, user.get("password_hash") or ""):
+        raise HTTPException(status_code=401, detail="Current password is incorrect.")
+    if not user.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Account disabled")
+
+    get_supabase().table("users").update(
+        {"password_hash": hash_password(body.new_password)}
+    ).eq("user_id", body.user_id).execute()
+    return {"status": "success"}

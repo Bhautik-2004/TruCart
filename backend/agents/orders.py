@@ -8,6 +8,7 @@ from .base import (
     load_agent_config,
     log_task,
     new_correlation_id,
+    notify,
 )
 
 AGENT_NAME = "order_agent"
@@ -168,6 +169,13 @@ def run_order_agent(correlation_id=None) -> dict[str, Any]:
 
         auto_executed += 1
         outcomes.append({"order_id": order["order_id"], "action": "confirmed"})
+        notify(
+            "Order confirmed",
+            f"Order {order['order_number']} confirmed and stock reserved.",
+            type="order",
+            reference_id=order["order_id"],
+            reference_type="order",
+        )
 
     log_id = log_task(
         AGENT_NAME, "order_processing", "completed",

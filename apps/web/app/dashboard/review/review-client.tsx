@@ -4,45 +4,59 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@workspace/ui/components/card"
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
 import { AlertTriangle, Clock, CheckCircle, XCircle, ArrowRight } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
 import { updateReviewStatus } from "../actions"
 
 interface ReviewItem {
   review_id: string; item_type: string; reference_id: string; agent_name: string; summary: string; status: string; created_at: string; reviewed_at: string | null
+  payload: Record<string, unknown> | null; review_note: string | null; reviewed_by: string | null
 }
 
-export default function ReviewClient({ items }: { items: ReviewItem[] }) {
+function formatPayload(payload: Record<string, unknown> | null): { label: string; value: string }[] {
+  if (!payload || typeof payload !== "object") return []
+  return Object.entries(payload)
+    .filter(([k]) => k !== "source" && k !== "item_type")
+    .map(([k, v]) => ({
+      label: k.replace(/_/g, " "),
+      value: v === null || v === undefined ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v),
+    }))
+}
+
+export default function ReviewClient({ items, reviewerId }: { items: ReviewItem[]; reviewerId: string | null }) {
   const router = useRouter()
   const [selectedItem, setSelectedItem] = useState<ReviewItem | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [actingId, setActingId] = useState<string | null>(null)
+  const [notes, setNotes] = useState<Record<string, string>>({})
 
   const pendingItems = items.filter(i => i.status === "pending")
   const approvedToday = items.filter(i => i.status === "approved" && i.reviewed_at && new Date(i.reviewed_at).toDateString() === new Date().toDateString()).length
   const rejectedToday = items.filter(i => i.status === "rejected" && i.reviewed_at && new Date(i.reviewed_at).toDateString() === new Date().toDateString()).length
-  const flaggedItems = items.filter(i => i.status === "flagged").length
+  const actionedToday = approvedToday + rejectedToday
 
   const stats = [
     { title: "Pending Review", value: pendingItems.length.toString(), icon: Clock, color: "text-yellow-500" },
     { title: "Approved Today", value: approvedToday.toString(), icon: CheckCircle, color: "text-green-500" },
     { title: "Rejected Today", value: rejectedToday.toString(), icon: XCircle, color: "text-red-500" },
-    { title: "Flagged Items", value: flaggedItems.toString(), icon: AlertTriangle, color: "text-orange-500" },
+    { title: "Actioned Today", value: actionedToday.toString(), icon: AlertTriangle, color: "text-orange-500" },
   ]
 
-  async function handleApprove(reviewId: string) {
+  async function act(reviewId: string, status: "approved" | "rejected") {
     setActingId(reviewId)
-    await updateReviewStatus(reviewId, "approved")
+    await updateReviewStatus(reviewId, status, { reviewerId, note: notes[reviewId]?.trim() || null })
     router.refresh()
     setActingId(null)
   }
 
+  async function handleApprove(reviewId: string) {
+    await act(reviewId, "approved")
+  }
+
   async function handleReject(reviewId: string) {
     if (!window.confirm("Reject this item?")) return
-    setActingId(reviewId)
-    await updateReviewStatus(reviewId, "rejected")
-    router.refresh()
-    setActingId(null)
+    await act(reviewId, "rejected")
   }
 
   return (
@@ -69,9 +83,25 @@ export default function ReviewClient({ items }: { items: ReviewItem[] }) {
                 <span className="text-xs text-muted-foreground">{new Date(item.created_at).toLocaleString()}</span>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground"><span className="font-medium text-foreground">Reason:</span> {item.summary}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Submitted by: {item.agent_name}</p>
+              {formatPayload(item.payload).length > 0 && (
+                <div className="grid gap-x-6 gap-y-1 rounded-lg border bg-muted/40 p-3 text-xs sm:grid-cols-2">
+                  {formatPayload(item.payload).map(f => (
+                    <div key={f.label} className="flex justify-between gap-2">
+                      <span className="capitalize text-muted-foreground">{f.label}</span>
+                      <span className="text-right font-medium">{f.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">Submitted by: {item.agent_name}</p>
+              <Input
+                placeholder="Reviewer note (optional)"
+                className="h-8 text-xs"
+                value={notes[item.review_id] ?? ""}
+                onChange={e => setNotes(n => ({ ...n, [item.review_id]: e.target.value }))}
+              />
             </CardContent>
             <CardFooter className="flex gap-2">
               <Button size="sm" onClick={() => handleApprove(item.review_id)} disabled={actingId === item.review_id}><CheckCircle className="mr-1 size-3" />{actingId === item.review_id ? "..." : "Approve"}</Button>
@@ -93,6 +123,7 @@ export default function ReviewClient({ items }: { items: ReviewItem[] }) {
           { label: "Reason", value: selectedItem.summary },
           { label: "Submitted By", value: selectedItem.agent_name },
           { label: "Time", value: new Date(selectedItem.created_at).toLocaleString() },
+          ...formatPayload(selectedItem.payload),
         ] : []}
         actions={selectedItem ? [
           { label: "Approve", onClick: () => { handleApprove(selectedItem.review_id); setSheetOpen(false) }, icon: <CheckCircle className="mr-1 size-3" /> },
