@@ -1,6 +1,6 @@
 import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..db import get_supabase
@@ -15,13 +15,13 @@ from .base import (
 AGENT_NAME = "marketing_agent"
 
 
-def run_marketing_agent() -> dict[str, Any]:
+def run_marketing_agent(correlation_id=None) -> dict[str, Any]:
     supabase = get_supabase()
     config = load_agent_config(AGENT_NAME)
     max_items = int(config.get("max_items_per_run", 3))
     budget_auto_approve_limit = float(config.get("budget_auto_approve_limit", 200))
     overstock_multiplier = float(config.get("overstock_multiplier", 4))
-    correlation_id = new_correlation_id()
+    correlation_id = correlation_id or new_correlation_id()
 
     inventory_result = (
         supabase.table("inventory")
@@ -65,6 +65,33 @@ def run_marketing_agent() -> dict[str, Any]:
             or []
         )
     }
+
+    # Idempotency: skip products that already have a live/draft clearance campaign.
+    existing_campaign_names = {
+        row["name"]
+        for row in (
+            supabase.table("campaigns")
+            .select("name, status")
+            .in_("status", ["active", "draft", "scheduled"])
+            .execute()
+            .data
+            or []
+        )
+    }
+    candidates = [
+        c for c in candidates
+        if c["product_id"] in products
+        and f"Clearance — {products[c['product_id']]['name']}"[:255] not in existing_campaign_names
+    ]
+    if not candidates:
+        log_id = log_task(
+            AGENT_NAME, "overstock_scan", "completed",
+            input_data={"products_scanned": len(totals)},
+            output_data={"scanned": 0, "auto_executed": 0, "escalated": 0, "note": "all overstock already has a campaign"},
+            model_used=None, correlation_id=correlation_id,
+        )
+        return {"status": "completed", "agent_name": AGENT_NAME, "log_id": log_id,
+                "correlation_id": str(correlation_id), "summary": {"scanned": 0, "auto_executed": 0, "escalated": 0}}
 
     active_customers = (
         supabase.table("customers").select("customer_id", count="exact").limit(1).execute()
@@ -117,7 +144,7 @@ def run_marketing_agent() -> dict[str, Any]:
         }
         if auto_approve:
             campaign_row["status"] = "active"
-            campaign_row["sent_at"] = datetime.utcnow().isoformat()
+            campaign_row["sent_at"] = datetime.now(timezone.utc).isoformat()
         else:
             campaign_row["status"] = "draft"
 

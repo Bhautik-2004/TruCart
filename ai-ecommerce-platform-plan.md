@@ -1,6 +1,13 @@
 # AI-Powered Autonomous E-Commerce Operations Platform
 ## Hackathon Implementation Plan & Architecture Document
 
+> **Note — this is the production-target design, NOT what is implemented in this repo.**
+> The AWS-managed architecture (Bedrock, Aurora, DynamoDB, Step Functions, ECS, Cognito,
+> OpenSearch) and the LangGraph supervisor/orchestrator pattern described here are the
+> "cloud-ready" story. The actual build is local-first: Next.js + FastAPI + Supabase +
+> local Ollama, with six independently-triggered rule-based agents and no orchestrator.
+> See `README.md` for what runs and `hackathon-context.md` for the substitutions.
+
 > **Team:** 2 Members  
 > **Problem Statement:** Build an AI-powered multi-agent platform that automates end-to-end e-commerce operations using autonomous AI agents.  
 > **Deployment Target:** Fully deployed on AWS (cloud-deployed AI agents, web application, solution architecture, DB schema, estimated costing, presentation, project documentation).  

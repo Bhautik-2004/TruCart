@@ -1,6 +1,11 @@
 # Agent Reference Guide (Supabase + Local, No Docker)
 ## AI-Powered Autonomous E-Commerce Operations Platform
 
+> **Note — parts of this guide describe the intended design, not the current build.**
+> There is no `orchestrator` process, no LangGraph, and no event simulator wired up yet;
+> agents are plain functions invoked by `POST /api/agents/{name}/run`. Use `README.md` as
+> the source of truth for what exists.
+
 This is the updated reference for your stack:
 
 - **No Docker** in local development.

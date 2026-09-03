@@ -39,15 +39,109 @@ export async function deleteNotification(notificationId: string) {
 
 export async function updateReviewStatus(
   reviewId: string,
-  status: "approved" | "rejected"
+  status: "approved" | "rejected",
+  opts?: { reviewerId?: string | null; note?: string | null }
 ) {
   const supabase = getSupabase()
-  const { error } = await supabase
+
+  const { data: item, error: fetchError } = await supabase
     .from("review_queue")
-    .update({ status, reviewed_at: new Date().toISOString() })
+    .select("*")
     .eq("review_id", reviewId)
-  if (error) throw error
+    .maybeSingle()
+  if (fetchError) throw fetchError
+  if (!item) throw new Error("Review item not found")
+  if (item.status !== "pending") throw new Error(`Review item already ${item.status}`)
+
+  const nowIso = new Date().toISOString()
+  const approve = status === "approved"
+
+  const { error: updateError } = await supabase
+    .from("review_queue")
+    .update({
+      status,
+      reviewed_by: opts?.reviewerId ?? null,
+      review_note: opts?.note ?? null,
+      reviewed_at: nowIso,
+    })
+    .eq("review_id", reviewId)
+  if (updateError) throw updateError
+
+  // Cascade the decision into the referenced domain table.
+  if (item.item_type === "purchase_order") {
+    await supabase
+      .from("purchase_orders")
+      .update(
+        approve
+          ? { status: "approved", approved_by: opts?.reviewerId ?? null, approved_at: nowIso }
+          : { status: "rejected" }
+      )
+      .eq("po_id", item.reference_id)
+  } else if (item.item_type === "price_change") {
+    if (approve) {
+      const { data: history } = await supabase
+        .from("price_history")
+        .select("product_id, new_price")
+        .eq("history_id", item.reference_id)
+        .maybeSingle()
+      if (history) {
+        await supabase
+          .from("products")
+          .update({ current_price: history.new_price })
+          .eq("product_id", history.product_id)
+      }
+    }
+    // reject: the price_history row stays as a rejected-proposal record; no product mutation.
+  } else if (item.item_type === "refund") {
+    const payload = item.payload || {}
+    const orderId = payload.order_id ?? item.reference_id
+    const ticketId = payload.ticket_id
+    if (approve) {
+      if (orderId) {
+        await supabase
+          .from("orders")
+          .update({ status: "cancelled", payment_status: "refunded" })
+          .eq("order_id", orderId)
+      }
+      if (ticketId) {
+        await supabase
+          .from("support_tickets")
+          .update({
+            status: "resolved",
+            resolution: payload.resolution_text ?? null,
+            confidence_score: payload.confidence_score ?? null,
+            resolved_at: nowIso,
+          })
+          .eq("ticket_id", ticketId)
+      }
+    } else if (ticketId) {
+      await supabase
+        .from("support_tickets")
+        .update({ status: "resolved", resolution: "Refund request rejected by reviewer.", resolved_at: nowIso })
+        .eq("ticket_id", ticketId)
+    }
+  } else if (item.item_type === "other") {
+    const payload = item.payload || {}
+    const ticketId = payload.ticket_id ?? item.reference_id
+    if (ticketId) {
+      await supabase
+        .from("support_tickets")
+        .update({
+          status: "resolved",
+          resolution: approve
+            ? (payload.resolution_text ?? "Reviewed and approved by staff.")
+            : "Reviewed and closed by staff.",
+          resolved_at: nowIso,
+        })
+        .eq("ticket_id", ticketId)
+    }
+  }
+
   revalidatePath("/dashboard/review")
+  revalidatePath("/dashboard/pricing")
+  revalidatePath("/dashboard/inventory")
+  revalidatePath("/dashboard/orders")
+  revalidatePath("/dashboard/support")
 }
 
 export async function updateTicketStatus(

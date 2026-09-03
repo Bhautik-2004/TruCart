@@ -23,15 +23,20 @@ VALUES
 ON CONFLICT (warehouse_id) DO NOTHING;
 
 -- --- admin user -------------------------------------------------------------
--- NOTE: Password hash below is a PLACEHOLDER. Staff typically sign in through
--- Supabase Auth (auth.users); this seeded row is a bootstrap admin record.
--- Replace with a real hash for the actual hashing scheme before using in prod.
+-- Bootstrap admin. The bcrypt hash below is for the demo password 'trucart-demo'
+-- (see README). Generate your own with:
+--   python -c "import bcrypt; print(bcrypt.hashpw(b'PW', bcrypt.gensalt(rounds=10)).decode())"
 INSERT INTO users (user_id, email, full_name, password_hash, role, is_active)
 VALUES
     ('20000000-0000-0000-0000-000000000001',
      'admin@techbazaar.local',
      'System Admin',
-     '$2a$10$placeholder_replace_me_hash_value',
+     '$2b$10$W4ZCcv99JUNlBJMJkn6XP.gW/nreHceG7.s/L6hZSD6mXBPFvtiF.',
      'admin',
      TRUE)
-ON CONFLICT (user_id) DO NOTHING;
+ON CONFLICT (user_id) DO UPDATE SET
+    email = EXCLUDED.email,
+    full_name = EXCLUDED.full_name,
+    password_hash = EXCLUDED.password_hash,
+    role = EXCLUDED.role,
+    is_active = EXCLUDED.is_active;

@@ -13,14 +13,17 @@ def _pick_carrier(order_number: str) -> str:
     return _CARRIERS[hash(order_number) % len(_CARRIERS)]
 
 
-def run_logistics_agent() -> dict[str, Any]:
+def run_logistics_agent(correlation_id=None) -> dict[str, Any]:
     supabase = get_supabase()
     config = load_agent_config(AGENT_NAME)
     max_items = int(config.get("max_items_per_run", 10))
     exception_after_days = float(config.get("exception_after_days", 4))
-    correlation_id = new_correlation_id()
+    transit_hours = float(config.get("transit_hours", 24))
+    correlation_id = correlation_id or new_correlation_id()
 
     now = datetime.now(timezone.utc)
+    transit_cutoff = (now - timedelta(hours=transit_hours)).isoformat()
+    today_iso = date.today().isoformat()
     auto_executed = 0
     escalated = 0
     outcomes = []
@@ -61,11 +64,13 @@ def run_logistics_agent() -> dict[str, Any]:
         auto_executed += 1
         outcomes.append({"order_id": order["order_id"], "action": "shipment_created", "carrier": carrier})
 
-    # 2. Progress label_created shipments to in_transit.
+    # 2. Progress label_created shipments to in_transit once they have dwelt in
+    #    that state for transit_hours (not unconditionally on every run).
     label_created = (
         supabase.table("shipments")
         .select("shipment_id, order_id")
         .eq("status", "label_created")
+        .lt("updated_at", transit_cutoff)
         .limit(max_items)
         .execute()
         .data
@@ -78,12 +83,33 @@ def run_logistics_agent() -> dict[str, Any]:
         auto_executed += 1
         outcomes.append({"shipment_id": shipment["shipment_id"], "action": "in_transit"})
 
+    # 2b. Progress in_transit shipments to out_for_delivery once the ETA is here
+    #     or they have dwelt long enough. Without this hop, agent-created
+    #     shipments never reach 'delivered' (step 3 only consumes
+    #     out_for_delivery).
+    to_out_for_delivery = (
+        supabase.table("shipments")
+        .select("shipment_id, order_id")
+        .eq("status", "in_transit")
+        .or_(f"estimated_delivery.lte.{today_iso},updated_at.lt.{transit_cutoff}")
+        .limit(max_items)
+        .execute()
+        .data
+        or []
+    )
+    for shipment in to_out_for_delivery:
+        supabase.table("shipments").update({"status": "out_for_delivery"}).eq(
+            "shipment_id", shipment["shipment_id"]
+        ).execute()
+        auto_executed += 1
+        outcomes.append({"shipment_id": shipment["shipment_id"], "action": "out_for_delivery"})
+
     # 3. Complete deliveries whose estimated date has passed.
     out_for_delivery = (
         supabase.table("shipments")
         .select("shipment_id, order_id, estimated_delivery")
         .eq("status", "out_for_delivery")
-        .lte("estimated_delivery", date.today().isoformat())
+        .lte("estimated_delivery", today_iso)
         .limit(max_items)
         .execute()
         .data
@@ -130,7 +156,10 @@ def run_logistics_agent() -> dict[str, Any]:
         )
         outcomes.append({"shipment_id": shipment["shipment_id"], "action": "flagged_exception"})
 
-    scanned = len(confirmed_orders) + len(label_created) + len(out_for_delivery) + len(stalled)
+    scanned = (
+        len(confirmed_orders) + len(label_created) + len(to_out_for_delivery)
+        + len(out_for_delivery) + len(stalled)
+    )
 
     log_id = log_task(
         AGENT_NAME, "shipment_lifecycle", "completed",

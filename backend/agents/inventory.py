@@ -1,5 +1,5 @@
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from ..db import get_supabase
@@ -16,15 +16,15 @@ AGENT_NAME = "inventory_agent"
 
 
 def _generate_po_number() -> str:
-    return f"PO-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    return f"PO-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
 
 
-def run_inventory_agent() -> dict[str, Any]:
+def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
     supabase = get_supabase()
     config = load_agent_config(AGENT_NAME)
     max_items = int(config.get("max_items_per_run", 5))
     po_auto_approve_limit = float(get_store_config("po_auto_approve_limit", 5000))
-    correlation_id = new_correlation_id()
+    correlation_id = correlation_id or new_correlation_id()
 
     inventory_result = (
         supabase.table("inventory")
@@ -37,6 +37,21 @@ def run_inventory_agent() -> dict[str, Any]:
         if (row["quantity_on_hand"] - row["quantity_reserved"]) <= row["reorder_point"]
     ]
     low_stock.sort(key=lambda r: r["reorder_point"] - (r["quantity_on_hand"] - r["quantity_reserved"]), reverse=True)
+
+    # Idempotency: skip products that already have an open purchase order, so a
+    # re-run (or a scheduled cycle) doesn't stack duplicate POs.
+    if low_stock:
+        open_po = (
+            supabase.table("purchase_orders")
+            .select("product_id, status")
+            .in_("product_id", [r["product_id"] for r in low_stock])
+            .execute()
+            .data
+            or []
+        )
+        blocked = {r["product_id"] for r in open_po if r["status"] not in ("received", "cancelled", "rejected")}
+        low_stock = [r for r in low_stock if r["product_id"] not in blocked]
+
     candidates = low_stock[:max_items]
 
     if not candidates:
@@ -100,42 +115,62 @@ def run_inventory_agent() -> dict[str, Any]:
         justification = justifications.get(product["sku"], f"Stock at {candidate['quantity_on_hand']} units, below reorder point {candidate['reorder_point']}.")
 
         under_limit = total_cost <= po_auto_approve_limit
-        po_row = {
-            "po_number": po_number,
-            "supplier_id": supplier["supplier_id"],
-            "product_id": candidate["product_id"],
-            "quantity": quantity,
-            "unit_cost": unit_cost,
-            "created_by_agent": AGENT_NAME,
-            "expected_delivery": (date.today() + timedelta(days=supplier.get("lead_time_days") or 7)).isoformat(),
+        expected_delivery = (date.today() + timedelta(days=supplier.get("lead_time_days") or 7)).isoformat()
+        review_summary = f"Approve {quantity} units restock ({po_number}) — ₹{total_cost:,.2f}. {justification}"
+        review_payload = {
+            "source": AGENT_NAME,
+            "item_type": "purchase_order",
+            "submitted_reason": "crosses_auto_approve_threshold",
+            "total_cost": total_cost,
+            "justification": justification,
         }
-        if under_limit:
-            po_row["status"] = "approved"
-            po_row["approved_at"] = datetime.utcnow().isoformat()
-        # else: leave status at schema default ('draft')
 
-        insert_result = supabase.table("purchase_orders").insert(po_row).execute()
-        po_id = insert_result.data[0]["po_id"]
-        po_results.append({"po_id": po_id, "po_number": po_number, "status": po_row.get("status", "draft"), "total_cost": total_cost})
+        # Atomic: purchase_orders insert + (when escalated) review_queue insert.
+        # Falls back to two separate writes if the RPC isn't installed.
+        review_created_by_rpc = False
+        try:
+            rpc_res = supabase.rpc("create_po_with_review", {
+                "p_po_number": po_number,
+                "p_supplier_id": supplier["supplier_id"],
+                "p_product_id": candidate["product_id"],
+                "p_quantity": quantity,
+                "p_unit_cost": unit_cost,
+                "p_expected_delivery": expected_delivery,
+                "p_auto_approve": under_limit,
+                "p_review_summary": review_summary,
+                "p_review_payload": review_payload,
+            }).execute()
+            po_id = rpc_res.data if isinstance(rpc_res.data, str) else (rpc_res.data or [None])[0]
+            review_created_by_rpc = True
+        except Exception:
+            po_row = {
+                "po_number": po_number,
+                "supplier_id": supplier["supplier_id"],
+                "product_id": candidate["product_id"],
+                "quantity": quantity,
+                "unit_cost": unit_cost,
+                "created_by_agent": AGENT_NAME,
+                "expected_delivery": expected_delivery,
+            }
+            if under_limit:
+                po_row["status"] = "approved"
+                po_row["approved_at"] = datetime.now(timezone.utc).isoformat()
+            po_id = supabase.table("purchase_orders").insert(po_row).execute().data[0]["po_id"]
+
+        po_results.append({"po_id": po_id, "po_number": po_number, "status": "approved" if under_limit else "draft", "total_cost": total_cost})
 
         if under_limit:
             auto_approved += 1
         else:
             escalated += 1
-            enqueue_review(
-                item_type="purchase_order",
-                reference_id=po_id,
-                agent_name=AGENT_NAME,
-                summary=f"Approve {quantity} units restock ({po_number}) — ₹{total_cost:,.2f}. {justification}",
-                payload={
-                    "source": AGENT_NAME,
-                    "item_type": "purchase_order",
-                    "reference_id": po_id,
-                    "submitted_reason": "crosses_auto_approve_threshold",
-                    "total_cost": total_cost,
-                    "justification": justification,
-                },
-            )
+            if not review_created_by_rpc:
+                enqueue_review(
+                    item_type="purchase_order",
+                    reference_id=po_id,
+                    agent_name=AGENT_NAME,
+                    summary=review_summary,
+                    payload={**review_payload, "reference_id": po_id},
+                )
 
     log_id = log_task(
         AGENT_NAME, "stock_reconciliation", "completed",

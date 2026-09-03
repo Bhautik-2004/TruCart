@@ -21,6 +21,7 @@ INSERT INTO agent_config (agent_name, config_key, config_value) VALUES
 ('pricing_agent', 'max_items_per_run', '10'::jsonb),
 ('pricing_agent', 'min_margin_pct', '10'::jsonb),
 ('pricing_agent', 'competitor_drop_escalate_pct', '20'::jsonb),
+('pricing_agent', 'dedup_window_minutes', '60'::jsonb),
 
 ('support_agent', 'model_name', '"qwen2.5:7b"'::jsonb),
 ('support_agent', 'max_items_per_run', '5'::jsonb),

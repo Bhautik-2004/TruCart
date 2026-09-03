@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..db import get_supabase
@@ -11,18 +11,19 @@ from .base import (
     log_task,
     new_correlation_id,
 )
+from .rag import format_context, retrieve
 
 AGENT_NAME = "support_agent"
 _PRIORITY_RANK = {"high": 0, "medium": 1, "normal": 2, "low": 3}
 
 
-def run_support_agent() -> dict[str, Any]:
+def run_support_agent(correlation_id=None) -> dict[str, Any]:
     supabase = get_supabase()
     config = load_agent_config(AGENT_NAME)
     max_items = int(config.get("max_items_per_run", 5))
     auto_resolve_confidence_min = float(config.get("auto_resolve_confidence_min", 0.75))
     refund_auto_approve_limit = float(get_store_config("refund_auto_approve_limit", 100))
-    correlation_id = new_correlation_id()
+    correlation_id = correlation_id or new_correlation_id()
 
     tickets_result = (
         supabase.table("support_tickets")
@@ -33,7 +34,30 @@ def run_support_agent() -> dict[str, Any]:
     tickets = sorted(
         tickets_result.data or [],
         key=lambda t: (_PRIORITY_RANK.get(t["priority"], 2), t["created_at"]),
-    )[:max_items]
+    )
+
+    # Idempotency: an escalated ticket stays 'open', so skip any ticket that
+    # already has a pending review item (otherwise every run re-escalates it).
+    if tickets:
+        pending = (
+            supabase.table("review_queue")
+            .select("reference_id, payload")
+            .eq("status", "pending")
+            .eq("agent_name", AGENT_NAME)
+            .execute()
+            .data
+            or []
+        )
+        pending_ticket_ids: set = set()
+        for r in pending:
+            if r.get("reference_id"):
+                pending_ticket_ids.add(r["reference_id"])
+            pl = r.get("payload") or {}
+            if pl.get("ticket_id"):
+                pending_ticket_ids.add(pl["ticket_id"])
+        tickets = [t for t in tickets if t["ticket_id"] not in pending_ticket_ids]
+
+    tickets = tickets[:max_items]
 
     if not tickets:
         log_id = log_task(
@@ -50,15 +74,30 @@ def run_support_agent() -> dict[str, Any]:
     model_used = None
 
     for ticket in tickets:
+        # RAG: pull the most relevant policy / FAQ / past-resolution snippets so
+        # the model triages against store rules rather than guessing. Degrades to
+        # no context if the embedding model or the match RPC is unavailable.
+        kb_chunks = retrieve(f"{ticket['subject']} {ticket['description']}", k=4)
+        kb_ids = [c["kb_id"] for c in kb_chunks if c.get("kb_id")]
+        kb_context = format_context(kb_chunks)
+
+        system_prompt = (
+            "You are a customer support triage assistant for an e-commerce store. "
+            "Read the ticket and decide how to handle it. Return JSON: "
+            '{"resolution_text": "...", "confidence_score": 0.0-1.0, '
+            '"refund_amount": number or null, "action": "resolve" | "refund" | "escalate"}. '
+            "Use \"refund\" only if the customer is clearly owed money back. "
+            "Use \"escalate\" if you are unsure or the issue needs human judgment."
+        )
+        if kb_context:
+            system_prompt += (
+                "\n\nRelevant store policy / FAQ / past resolutions:\n"
+                + kb_context
+                + "\n\nBase your decision on this context where it applies, and reference it in resolution_text."
+            )
+
         llm_result = call_llm_json(
-            system_prompt=(
-                "You are a customer support triage assistant for an e-commerce store. "
-                "Read the ticket and decide how to handle it. Return JSON: "
-                '{"resolution_text": "...", "confidence_score": 0.0-1.0, '
-                '"refund_amount": number or null, "action": "resolve" | "refund" | "escalate"}. '
-                "Use \"refund\" only if the customer is clearly owed money back. "
-                "Use \"escalate\" if you are unsure or the issue needs human judgment."
-            ),
+            system_prompt=system_prompt,
             user_prompt=str({
                 "subject": ticket["subject"],
                 "description": ticket["description"],
@@ -68,7 +107,7 @@ def run_support_agent() -> dict[str, Any]:
             agent_name=AGENT_NAME,
             correlation_id=correlation_id,
             call_name="triage-support-ticket",
-            trace_metadata={"ticket_id": ticket["ticket_id"]},
+            trace_metadata={"ticket_id": ticket["ticket_id"], "kb_ids": kb_ids},
         )
         if llm_result is None:
             llm_result = {"resolution_text": "Unable to auto-resolve; needs human review.", "confidence_score": 0.0, "refund_amount": None, "action": "escalate"}
@@ -88,23 +127,57 @@ def run_support_agent() -> dict[str, Any]:
                 "status": "resolved",
                 "resolution": resolution_text,
                 "confidence_score": confidence,
-                "resolved_at": datetime.utcnow().isoformat(),
+                "resolved_at": datetime.now(timezone.utc).isoformat(),
             }).eq("ticket_id", ticket["ticket_id"]).execute()
             auto_executed += 1
-            outcomes.append({"ticket_id": ticket["ticket_id"], "action": "resolved"})
+            outcomes.append({"ticket_id": ticket["ticket_id"], "action": "resolved", "kb_ids": kb_ids})
 
         elif action == "refund":
-            refund_amount = float(refund_amount or 0)
-            if refund_amount <= refund_auto_approve_limit:
+            order_row = (
+                supabase.table("orders")
+                .select("total_amount")
+                .eq("order_id", ticket["order_id"])
+                .limit(1)
+                .execute()
+                .data
+                or [{}]
+            )
+            order_total = float(order_row[0].get("total_amount") or 0)
+            requested_amount = float(refund_amount or 0)
+            # Never refund more than the order was worth. The config ceiling
+            # (refund_auto_approve_limit) alone would let a hallucinated amount
+            # under the cap through; clamp to the real order total first.
+            refund_amount = min(requested_amount, order_total) if order_total > 0 else 0.0
+
+            if refund_amount <= 0:
+                escalated += 1
+                enqueue_review(
+                    item_type="other",
+                    reference_id=ticket["ticket_id"],
+                    agent_name=AGENT_NAME,
+                    summary=f"Refund amount could not be determined: {ticket['subject']}",
+                    payload={
+                        "source": AGENT_NAME,
+                        "item_type": "other",
+                        "ticket_id": ticket["ticket_id"],
+                        "order_id": ticket["order_id"],
+                        "requested_amount": requested_amount,
+                        "order_total": order_total,
+                        "resolution_text": resolution_text,
+                        "confidence_score": confidence,
+                    },
+                )
+                outcomes.append({"ticket_id": ticket["ticket_id"], "action": "escalated_refund", "reason": "amount_undetermined", "kb_ids": kb_ids})
+            elif refund_amount <= refund_auto_approve_limit:
                 supabase.table("orders").update({"status": "cancelled", "payment_status": "refunded"}).eq("order_id", ticket["order_id"]).execute()
                 supabase.table("support_tickets").update({
                     "status": "resolved",
                     "resolution": resolution_text,
                     "confidence_score": confidence,
-                    "resolved_at": datetime.utcnow().isoformat(),
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("ticket_id", ticket["ticket_id"]).execute()
                 auto_executed += 1
-                outcomes.append({"ticket_id": ticket["ticket_id"], "action": "refunded", "amount": refund_amount})
+                outcomes.append({"ticket_id": ticket["ticket_id"], "action": "refunded", "amount": refund_amount, "requested": requested_amount, "order_total": order_total, "kb_ids": kb_ids})
             else:
                 escalated += 1
                 enqueue_review(
@@ -118,11 +191,13 @@ def run_support_agent() -> dict[str, Any]:
                         "ticket_id": ticket["ticket_id"],
                         "order_id": ticket["order_id"],
                         "refund_amount": refund_amount,
+                        "requested_amount": requested_amount,
+                        "order_total": order_total,
                         "resolution_text": resolution_text,
                         "confidence_score": confidence,
                     },
                 )
-                outcomes.append({"ticket_id": ticket["ticket_id"], "action": "escalated_refund", "amount": refund_amount})
+                outcomes.append({"ticket_id": ticket["ticket_id"], "action": "escalated_refund", "amount": refund_amount, "order_total": order_total, "kb_ids": kb_ids})
 
         else:
             escalated += 1
@@ -139,7 +214,7 @@ def run_support_agent() -> dict[str, Any]:
                     "confidence_score": confidence,
                 },
             )
-            outcomes.append({"ticket_id": ticket["ticket_id"], "action": "escalated"})
+            outcomes.append({"ticket_id": ticket["ticket_id"], "action": "escalated", "kb_ids": kb_ids})
 
     log_id = log_task(
         AGENT_NAME, "ticket_triage", "completed",

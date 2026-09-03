@@ -19,6 +19,7 @@ export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
   const [sheetOpen, setSheetOpen] = useState(false)
   const [sheetTab, setSheetTab] = useState<"logs" | "metrics">("logs")
   const [runningAgent, setRunningAgent] = useState<string | null>(null)
+  const [runningCycle, setRunningCycle] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   async function handleRun(agentName: string) {
@@ -38,6 +39,28 @@ export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
     } finally {
       setRunningAgent(null)
       setTimeout(() => setToast(null), 5000)
+    }
+  }
+
+  async function handleRunCycle() {
+    setRunningCycle(true)
+    try {
+      const res = await fetch(`/api/agents/orchestrator/run`, { method: "POST" })
+      const data = await res.json()
+      if (!res.ok || data.status === "error") {
+        setToast(`Full cycle failed: ${data.error || data.detail || "unknown error"}`)
+      } else {
+        const s = data.summary || {}
+        const failed = (data.agents || []).filter((a: { status: string }) => a.status === "error").map((a: { agent_name: string }) => displayNames[a.agent_name] || a.agent_name)
+        const base = `Full cycle ${data.status} — scanned ${s.scanned ?? 0}, auto-executed ${s.auto_executed ?? 0}, escalated ${s.escalated ?? 0}.`
+        setToast(failed.length ? `${base} Failed: ${failed.join(", ")}.` : base)
+        router.refresh()
+      }
+    } catch (error) {
+      setToast(`Full cycle failed: ${error instanceof Error ? error.message : "backend unreachable"}`)
+    } finally {
+      setRunningCycle(false)
+      setTimeout(() => setToast(null), 6000)
     }
   }
 
@@ -83,7 +106,12 @@ export default function AgentsClient({ taskLogs }: { taskLogs: TaskLog[] }) {
 
       <div className="flex items-center justify-between">
         <div><h2 className="text-2xl font-bold tracking-tight">Agents</h2><p className="text-muted-foreground">Monitor and manage your AI-powered agents.</p></div>
-        <Button variant="outline" onClick={() => alert("Agent configuration coming soon")}><Settings className="mr-2 size-4" />Configure</Button>
+        <div className="flex gap-2">
+          <Button onClick={handleRunCycle} disabled={runningCycle}>
+            {runningCycle ? (<><Loader2 className="mr-2 size-4 animate-spin" />Running cycle...</>) : (<><Play className="mr-2 size-4" />Run full cycle</>)}
+          </Button>
+          <Button variant="outline" onClick={() => alert("Agent configuration coming soon")}><Settings className="mr-2 size-4" />Configure</Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

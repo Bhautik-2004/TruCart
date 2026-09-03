@@ -26,7 +26,6 @@ import {
 export interface RevenueDataPoint {
   month: string
   revenue: number
-  lastYear: number
 }
 
 export interface OrdersByStatus {
@@ -45,12 +44,6 @@ export interface TopProduct {
   name: string
   sales: number
   revenue: number
-}
-
-export interface RegionData {
-  region: string
-  sales: number
-  percentage: number
 }
 
 export interface ActivityItem {
@@ -88,7 +81,7 @@ export function RevenueChart({ data }: { data: RevenueDataPoint[] }) {
     <Card className="col-span-2">
       <CardHeader>
         <CardTitle>Revenue Overview</CardTitle>
-        <CardDescription>Monthly revenue with year-over-year comparison</CardDescription>
+        <CardDescription>Revenue by month (from recorded orders)</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="h-[300px]">
@@ -99,17 +92,12 @@ export function RevenueChart({ data }: { data: RevenueDataPoint[] }) {
                   <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
                   <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                 </linearGradient>
-                <linearGradient id="lastYearGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="hsl(var(--muted-foreground))" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="hsl(var(--muted-foreground))" stopOpacity={0} />
-                </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis dataKey="month" className="text-xs" tickLine={false} axisLine={false} />
               <YAxis className="text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => `$${v / 1000}k`} />
               <Tooltip content={<ChartTooltipContent />} />
-              <Area type="monotone" dataKey="lastYear" name="Last Year" stroke="hsl(var(--muted-foreground))" strokeWidth={1.5} fill="url(#lastYearGrad)" strokeDasharray="5 5" />
-              <Area type="monotone" dataKey="revenue" name="This Year" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#revenueGrad)" />
+              <Area type="monotone" dataKey="revenue" name="Revenue" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#revenueGrad)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -212,33 +200,6 @@ export function TopProductsChart({ data }: { data: TopProduct[] }) {
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-export function SalesByRegion({ data }: { data: RegionData[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Sales by Region</CardTitle>
-        <CardDescription>Geographic revenue breakdown</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {data.map((region) => (
-          <div key={region.region} className="space-y-1">
-            <div className="flex items-center justify-between text-sm">
-              <span>{region.region}</span>
-              <span className="font-medium">${(region.sales / 1000).toFixed(1)}k</span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-              <div
-                className="h-full rounded-full bg-primary transition-all"
-                style={{ width: `${region.percentage}%` }}
-              />
-            </div>
-          </div>
-        ))}
       </CardContent>
     </Card>
   )

@@ -1,6 +1,12 @@
 # The Idea: AI-Powered Autonomous E-Commerce Operations Platform
 ## Explained Simply
 
+> **Note — this is the concept/vision document, not a description of the current build.**
+> The "day in the life" narrative below describes the intended end state (scheduled,
+> coordinating, fully autonomous agents). For what actually runs today — on-demand agents,
+> no orchestrator, simulated carrier/email/payment integrations — see `README.md` and
+> `hackathon-context.md`.
+
 ---
 
 ## The Problem in Plain Language
@@ -105,7 +111,7 @@ The **Inventory Agent** wakes up and checks all stock levels. It notices that "W
 A customer orders 2 units of "Wireless Earbuds Pro." The **Order Agent** picks up the order, verifies the payment, checks with the **Inventory Agent** that stock is available (it reserves 2 units immediately to prevent overselling), confirms the order, and routes it to the nearest warehouse for fulfillment. The **Logistics Agent** compares rates across Delhivery, BlueDart, and FedEx, picks the cheapest option that delivers within 3 days, generates a shipping label, and sends the customer a tracking link.
 
 ### 10:30 AM — Customer Complaint
-A customer opens a support ticket: "My order arrived but the earbuds don't charge." The **Support Agent** receives the ticket, retrieves the customer's order history, classifies the issue as "defective product — high priority," checks the return policy (30-day return window — customer is eligible), and initiates a replacement order. Since the replacement value is $150 (below the $100 auto-refund threshold... actually, it's above), it routes the refund to the **human review queue**. An admin approves it in 2 minutes. The Support Agent notifies the customer, "We're sorry about the issue. A replacement has been shipped, and you'll receive it in 2 days."
+A customer opens a support ticket: "My order arrived but the earbuds don't charge." The **Support Agent** receives the ticket, retrieves the customer's order history, classifies the issue as "defective product — high priority," checks the return policy (30-day return window — customer is eligible), and initiates a replacement order. Since the replacement value is $150, which is above the $100 auto-refund threshold, it routes the refund to the **human review queue**. An admin approves it in 2 minutes. The Support Agent notifies the customer, "We're sorry about the issue. A replacement has been shipped, and you'll receive it in 2 days."
 
 ### 11:45 AM — Competitor Price Drop
 The **Pricing Agent** (which monitors competitor prices every 30 minutes) detects that a competitor just dropped the price of "Wireless Earbuds Pro" from $179 to $149. It analyzes the margin impact: our cost is $120, so at $149 we'd make $29 profit per unit (19% margin) — still profitable. It checks current inventory levels (12 units — low, so we don't need to aggressively compete). It adjusts our price to $159 (a middle ground — competitive but not a race to the bottom). It logs the change with reasoning: "Competitor dropped 17%. Our price adjusted from $179 to $159 (11% drop). Margin: 25%. Inventory: low, no need to match competitor price." It also notifies the **Marketing Agent** about the price change.

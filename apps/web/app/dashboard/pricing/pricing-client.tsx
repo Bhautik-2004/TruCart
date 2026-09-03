@@ -1,36 +1,86 @@
 "use client"
 
 import { useState, useMemo } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@workspace/ui/components/card"
 import { Button } from "@workspace/ui/components/button"
-import { DollarSign, TrendingUp, TrendingDown, Target, Sparkles } from "lucide-react"
+import { Percent, TrendingDown, PackageX, History, Sparkles } from "lucide-react"
 
-interface Product { product_id: string; sku: string; name: string; current_price: number; base_price: number; status: string }
+// Mirrors agent_config for pricing_agent (migration 014). Display only — the
+// agent reads the authoritative values from the database at run time.
+const TARGET_MARGIN_PCT = 30
+const OVERSTOCK_COVER_DAYS = 60
+
+interface Product { product_id: string; sku: string; name: string; current_price: number; cost_price: number; status: string }
 interface PriceHistory { product_id: string; old_price: number; new_price: number; change_reason: string; changed_by: string; created_at: string }
-interface Competitor { product_id: string; competitor_name: string; competitor_price: number; detected_at: string }
+interface InventoryRow { product_id: string; quantity_on_hand: number; quantity_reserved: number }
+interface OrderItemRow { product_id: string; quantity: number }
 
-export default function PricingClient({ products, priceHistory, competitors }: { products: Product[]; priceHistory: PriceHistory[]; competitors: Competitor[] }) {
+export default function PricingClient({
+  products,
+  inventory,
+  priceHistory,
+  orderItems,
+  demandWindowDays,
+}: {
+  products: Product[]
+  inventory: InventoryRow[]
+  priceHistory: PriceHistory[]
+  orderItems: OrderItemRow[]
+  demandWindowDays: number
+}) {
+  const router = useRouter()
   const [analyzing, setAnalyzing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   const productMap = useMemo(() => new Map(products.map(p => [p.product_id, p])), [products])
 
-  const prices = products.map(p => Number(p.current_price)).filter(p => p > 0)
-  const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0
-  const increases = priceHistory.filter(h => Number(h.new_price) > Number(h.old_price)).length
-  const decreases = priceHistory.filter(h => Number(h.new_price) < Number(h.old_price)).length
-  const significantChanges = competitors.filter(cp => {
-    const product = productMap.get(cp.product_id)
-    if (!product) return false
-    const diff = Math.abs(Number(cp.competitor_price) - Number(product.current_price)) / Number(product.current_price)
-    return diff > 0.1
-  }).length
+  const stockOnHand = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of inventory) {
+      const avail = (Number(r.quantity_on_hand) || 0) - (Number(r.quantity_reserved) || 0)
+      m.set(r.product_id, (m.get(r.product_id) || 0) + avail)
+    }
+    return m
+  }, [inventory])
+
+  const unitsSold = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of orderItems) m.set(r.product_id, (m.get(r.product_id) || 0) + (Number(r.quantity) || 0))
+    return m
+  }, [orderItems])
+
+  const lastChange = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const h of priceHistory) if (!m.has(h.product_id)) m.set(h.product_id, h.created_at)
+    return m
+  }, [priceHistory])
+
+  const rows = useMemo(() => {
+    return products
+      .map(p => {
+        const price = Number(p.current_price) || 0
+        const cost = Number(p.cost_price) || 0
+        const marginPct = price > 0 ? ((price - cost) / price) * 100 : 0
+        const onHand = Math.max(stockOnHand.get(p.product_id) || 0, 0)
+        const sold = unitsSold.get(p.product_id) || 0
+        const dailyVelocity = demandWindowDays > 0 ? sold / demandWindowDays : 0
+        const daysOfCover = dailyVelocity > 0 ? onHand / dailyVelocity : null
+        return { p, price, cost, marginPct, onHand, daysOfCover, last: lastChange.get(p.product_id) || null }
+      })
+      .filter(r => r.price > 0 && r.cost > 0)
+  }, [products, stockOnHand, unitsSold, lastChange, demandWindowDays])
+
+  const withMargin = rows.filter(r => Number.isFinite(r.marginPct))
+  const avgMargin = withMargin.length > 0 ? withMargin.reduce((a, r) => a + r.marginPct, 0) / withMargin.length : 0
+  const belowTarget = rows.filter(r => r.marginPct < TARGET_MARGIN_PCT).length
+  const overstocked = rows.filter(r => r.daysOfCover !== null && r.daysOfCover > OVERSTOCK_COVER_DAYS).length
 
   const stats = [
-    { title: "Avg Product Price", value: `₹${avgPrice.toFixed(2)}`, icon: DollarSign, change: `${products.length} products` },
-    { title: "Price Increases", value: increases.toString(), icon: TrendingUp, change: "Auto-adjusted" },
-    { title: "Price Decreases", value: decreases.toString(), icon: TrendingDown, change: "Competitive matching" },
-    { title: "Price Alerts", value: significantChanges.toString(), icon: Target, change: `${significantChanges} critical` },
+    { title: "Avg Margin", value: `${avgMargin.toFixed(1)}%`, icon: Percent, change: `Target ${TARGET_MARGIN_PCT}%` },
+    { title: "Below Target Margin", value: belowTarget.toString(), icon: TrendingDown, change: `of ${rows.length} priced products` },
+    { title: "Overstocked", value: overstocked.toString(), icon: PackageX, change: `> ${OVERSTOCK_COVER_DAYS} days of cover` },
+    { title: "Recent Adjustments", value: priceHistory.length.toString(), icon: History, change: "last 20 logged" },
   ]
 
   const adjustments = priceHistory.filter(h => h.old_price && h.new_price).map(h => {
@@ -40,21 +90,29 @@ export default function PricingClient({ products, priceHistory, competitors }: {
     return { product: product?.name || "Unknown", sku: product?.sku || "N/A", oldPrice: `₹${oldP.toFixed(2)}`, newPrice: `₹${newP.toFixed(2)}`, change: `${changePct >= 0 ? "+" : ""}${changePct.toFixed(1)}%`, reason: h.change_reason || "Price update", agent: h.changed_by || "pricing_agent", timestamp: h.created_at, isIncrease: changePct > 0 }
   })
 
-  const competitorMap = new Map<string, { ours: number; prices: Record<string, number> }>()
-  for (const cp of competitors) {
-    const product = productMap.get(cp.product_id)
-    if (!product) continue
-    if (!competitorMap.has(product.name)) competitorMap.set(product.name, { ours: Number(product.current_price), prices: {} })
-    competitorMap.get(product.name)!.prices[cp.competitor_name || "Unknown"] = Number(cp.competitor_price)
-  }
-  const compPrices = Array.from(competitorMap.entries()).slice(0, 6).map(([product, data]) => ({
-    product: product.length > 30 ? product.substring(0, 30) + "..." : product, ours: `₹${data.ours.toFixed(2)}`,
-    competitors: Object.entries(data.prices).slice(0, 3).map(([name, price]) => ({ name, price: `₹${price.toFixed(2)}` })),
-  }))
+  const tableRows = useMemo(
+    () => [...rows].sort((a, b) => Math.abs(b.marginPct - TARGET_MARGIN_PCT) - Math.abs(a.marginPct - TARGET_MARGIN_PCT)).slice(0, 40),
+    [rows],
+  )
 
-  function handleRunAnalysis() {
+  async function handleRunAnalysis() {
     setAnalyzing(true)
-    setTimeout(() => { setAnalyzing(false); setToast(`Price analysis complete. Found ${significantChanges} pricing alerts.`); setTimeout(() => setToast(null), 4000) }, 2000)
+    try {
+      const res = await fetch("/api/agents/pricing_agent/run", { method: "POST" })
+      const data = await res.json()
+      if (!res.ok || data.status === "error") {
+        setToast(`Price analysis failed: ${data.error || data.detail || "unknown error"}`)
+      } else {
+        const s = data.summary || {}
+        setToast(`Price analysis complete — scanned ${s.scanned ?? 0}, auto-applied ${s.auto_executed ?? 0}, escalated ${s.escalated ?? 0}.`)
+        router.refresh()
+      }
+    } catch (error) {
+      setToast(`Price analysis failed: ${error instanceof Error ? error.message : "backend unreachable"}`)
+    } finally {
+      setAnalyzing(false)
+      setTimeout(() => setToast(null), 5000)
+    }
   }
 
   return (
@@ -62,7 +120,7 @@ export default function PricingClient({ products, priceHistory, competitors }: {
       {toast && <div className="fixed top-4 right-4 z-50 rounded-lg bg-green-600 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
 
       <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold tracking-tight">Pricing</h2><p className="text-muted-foreground">AI-powered dynamic pricing optimization.</p></div>
+        <div><h2 className="text-2xl font-bold tracking-tight">Pricing</h2><p className="text-muted-foreground">Cost-basis and margin-driven repricing.</p></div>
         <Button onClick={handleRunAnalysis} disabled={analyzing}><Sparkles className="mr-2 size-4" />{analyzing ? "Analyzing..." : "Run Price Analysis"}</Button>
       </div>
 
@@ -74,7 +132,7 @@ export default function PricingClient({ products, priceHistory, competitors }: {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>Recent Price Adjustments</CardTitle><CardDescription>AI-optimized price changes</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Recent Price Adjustments</CardTitle><CardDescription>Logged price changes and their rationale</CardDescription></CardHeader>
           <CardContent className="space-y-4">
             {adjustments.length === 0 ? (<p className="text-sm text-muted-foreground text-center py-4">No price adjustments yet</p>)
             : adjustments.map((item, i) => (
@@ -94,22 +152,30 @@ export default function PricingClient({ products, priceHistory, competitors }: {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>Competitor Price Comparison</CardTitle><CardDescription>Market positioning analysis</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Margin &amp; Stock Cover</CardTitle><CardDescription>Priced products furthest from the {TARGET_MARGIN_PCT}% target margin</CardDescription></CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="border-b">
+                  <th className="pb-2 text-left font-medium text-muted-foreground">SKU</th>
                   <th className="pb-2 text-left font-medium text-muted-foreground">Product</th>
-                  <th className="pb-2 text-left font-medium text-muted-foreground">Ours</th>
-                  {compPrices[0]?.competitors.map((_, i) => (<th key={i} className="pb-2 text-left font-medium text-muted-foreground">Comp. {i + 1}</th>))}
+                  <th className="pb-2 text-right font-medium text-muted-foreground">Unit Cost</th>
+                  <th className="pb-2 text-right font-medium text-muted-foreground">Price</th>
+                  <th className="pb-2 text-right font-medium text-muted-foreground">Margin</th>
+                  <th className="pb-2 text-right font-medium text-muted-foreground">Days Cover</th>
+                  <th className="pb-2 text-right font-medium text-muted-foreground">Last Change</th>
                 </tr></thead>
                 <tbody>
-                  {compPrices.length === 0 ? (<tr><td colSpan={4} className="py-4 text-center text-muted-foreground">No competitor data</td></tr>)
-                  : compPrices.map(item => (
-                    <tr key={item.product} className="border-b last:border-0">
-                      <td className="py-3 font-medium">{item.product}</td>
-                      <td className="py-3 font-bold text-primary">{item.ours}</td>
-                      {item.competitors.map((c, i) => (<td key={i} className="py-3 text-muted-foreground">{c.price}</td>))}
+                  {tableRows.length === 0 ? (<tr><td colSpan={7} className="py-4 text-center text-muted-foreground">No priced products</td></tr>)
+                  : tableRows.map(r => (
+                    <tr key={r.p.product_id} className="border-b last:border-0">
+                      <td className="py-3 font-mono text-xs">{r.p.sku}</td>
+                      <td className="py-3 font-medium">{r.p.name.length > 28 ? r.p.name.substring(0, 28) + "…" : r.p.name}</td>
+                      <td className="py-3 text-right text-muted-foreground">₹{r.cost.toFixed(2)}</td>
+                      <td className="py-3 text-right font-bold text-primary">₹{r.price.toFixed(2)}</td>
+                      <td className={`py-3 text-right font-medium ${r.marginPct < TARGET_MARGIN_PCT ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>{r.marginPct.toFixed(1)}%</td>
+                      <td className="py-3 text-right text-muted-foreground">{r.daysOfCover === null ? "—" : Math.round(r.daysOfCover)}</td>
+                      <td className="py-3 text-right text-muted-foreground">{r.last ? new Date(r.last).toLocaleDateString() : "—"}</td>
                     </tr>
                   ))}
                 </tbody>

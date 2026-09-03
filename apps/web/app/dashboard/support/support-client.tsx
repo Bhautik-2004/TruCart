@@ -19,6 +19,7 @@ interface Ticket {
   assigned_to_agent: string
   created_at: string
   updated_at: string
+  resolved_at?: string | null
   customer_id: string
   customers?: { full_name: string; email: string }
   messages_count?: number
@@ -61,9 +62,14 @@ export default function SupportClient({ tickets, customers, orders }: { tickets:
   const resolvedCount = tickets.filter(t => t.status === "resolved").length
   const escalatedCount = tickets.filter(t => t.status === "escalated").length
 
+  const resolvedWithTimes = tickets.filter(t => t.status === "resolved" && t.resolved_at && t.created_at)
+  const avgResolutionHours = resolvedWithTimes.length > 0
+    ? resolvedWithTimes.reduce((sum, t) => sum + (new Date(t.resolved_at!).getTime() - new Date(t.created_at).getTime()) / 3_600_000, 0) / resolvedWithTimes.length
+    : null
+
   const stats = [
     { title: "Open Tickets", value: openCount.toString(), icon: MessageSquare, change: `${tickets.length} total` },
-    { title: "Avg Response Time", value: "2.4h", icon: Clock, change: "From resolved tickets" },
+    { title: "Avg Resolution Time", value: avgResolutionHours === null ? "—" : `${avgResolutionHours.toFixed(1)}h`, icon: Clock, change: `${resolvedWithTimes.length} resolved` },
     { title: "Resolved", value: resolvedCount.toString(), icon: CheckCircle, change: "Successfully resolved" },
     { title: "Escalated", value: escalatedCount.toString(), icon: AlertCircle, change: "Need review" },
   ]
