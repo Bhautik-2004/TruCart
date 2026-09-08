@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from .agents.base import get_langfuse_client
 from .db import get_supabase
 from .routers.agents import router as agents_router
+from .routers.ledger import router as ledger_router
 from .routers.simulate import router as simulate_router
 from .scheduler import start_scheduler, stop_scheduler
 
@@ -53,6 +54,7 @@ app.add_middleware(
 
 app.include_router(agents_router)
 app.include_router(simulate_router)
+app.include_router(ledger_router)
 
 
 class LoginRequest(BaseModel):

@@ -9,9 +9,17 @@ import { Bot, Settings, Activity, Zap, Clock, CheckCircle, AlertCircle, Play, Lo
 import { DetailSheet } from "../components/detail-sheet"
 import { updateAgentConfig } from "../actions"
 
-interface TaskLog { log_id: string; task_type: string; status: string; model_used: string; tokens_used: number; created_at: string; agent_name: string }
+interface TaskLog { log_id: string; task_type: string; status: string; model_used: string | null; tokens_used: number | null; created_at: string; agent_name: string }
 interface AgentConfigRow { agent_name: string; config_key: string; config_value: unknown }
 interface SchedulerStatus { enabled: boolean; running: boolean; interval_minutes: number; last_cycle_at: string | null; last_cycle_status: string | null }
+type TrustByAgent = Record<string, { trust_score: number; win_rate: number; verified: number }>
+interface LlmStatus { configured: boolean; reachable: boolean; model: string }
+
+function trustColor(score: number): string {
+  if (score >= 70) return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+  if (score >= 45) return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+  return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+}
 
 const displayNames: Record<string, string> = { inventory_agent: "Inventory Agent", order_agent: "Orders Agent", support_agent: "Support Agent", pricing_agent: "Pricing Agent", marketing_agent: "Marketing Agent", logistics_agent: "Logistics Agent" }
 const descriptionMap: Record<string, string> = { inventory_agent: "Monitors stock levels and manages reorders.", order_agent: "Processes orders and handles status updates.", support_agent: "Responds to customer inquiries with AI support.", pricing_agent: "Adjusts prices dynamically for optimal revenue.", marketing_agent: "Manages campaigns and tracks performance.", logistics_agent: "Optimizes shipping routes and tracks deliveries." }
@@ -20,7 +28,7 @@ function configValueToInput(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value)
 }
 
-export default function AgentsClient({ taskLogs, agentConfig, scheduler }: { taskLogs: TaskLog[]; agentConfig: AgentConfigRow[]; scheduler: SchedulerStatus | null }) {
+export default function AgentsClient({ taskLogs, agentConfig, scheduler, trustByAgent, llm }: { taskLogs: TaskLog[]; agentConfig: AgentConfigRow[]; scheduler: SchedulerStatus | null; trustByAgent: TrustByAgent; llm: LlmStatus | null }) {
   const router = useRouter()
   const [selectedAgent, setSelectedAgent] = useState<{ name: string; logs: TaskLog[]; stats: { total: number; completed: number; errors: number; accuracy: number; lastActive: string; status: string } } | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -139,6 +147,15 @@ export default function AgentsClient({ taskLogs, agentConfig, scheduler }: { tas
     <div className="space-y-6">
       {toast && <div className="fixed top-4 right-4 z-50 rounded-lg bg-green-600 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
 
+      {llm && llm.configured && !llm.reachable && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200">
+          Local LLM (<code>{llm.model}</code>) is unreachable — the pricing and support agents are running in deterministic fallback (mostly escalating). Start Ollama for full behaviour.
+        </div>
+      )}
+      {llm && !llm.configured && (
+        <p className="text-xs text-muted-foreground">No LLM configured; agents use rule-based fallbacks.</p>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Agents</h2>
@@ -204,7 +221,19 @@ export default function AgentsClient({ taskLogs, agentConfig, scheduler }: { tas
             <CardHeader>
               <div className="flex items-center gap-2">
                 <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10"><Bot className="size-4 text-primary" /></div>
-                <div><CardTitle className="text-base">{displayNames[agent.name] || agent.name}</CardTitle><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[agent.stats.status]}`}>{agent.stats.status}</span></div>
+                <div className="flex-1"><CardTitle className="text-base">{displayNames[agent.name] || agent.name}</CardTitle><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[agent.stats.status]}`}>{agent.stats.status}</span></div>
+                {(() => {
+                  const t = trustByAgent[agent.name]
+                  if (!t || t.verified === 0) return null
+                  return (
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${trustColor(t.trust_score)}`}
+                      title={`Verified win-rate ${Math.round(t.win_rate * 100)}% over ${t.verified} decisions — see the Ledger`}
+                    >
+                      Trust {t.trust_score}
+                    </span>
+                  )
+                })()}
               </div>
             </CardHeader>
             <CardContent className="space-y-3">

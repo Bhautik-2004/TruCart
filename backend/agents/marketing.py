@@ -7,22 +7,26 @@ from ..db import get_supabase
 from .base import (
     call_llm_json,
     enqueue_review,
+    load_active_policies,
     load_agent_config,
     log_task,
     new_correlation_id,
     notify,
 )
+from .ledger import record_action
 
 AGENT_NAME = "marketing_agent"
 
 
-def run_marketing_agent(correlation_id=None) -> dict[str, Any]:
+def run_marketing_agent(correlation_id=None, skip_product_ids=None) -> dict[str, Any]:
     supabase = get_supabase()
     config = load_agent_config(AGENT_NAME)
     max_items = int(config.get("max_items_per_run", 3))
     budget_auto_approve_limit = float(config.get("budget_auto_approve_limit", 200))
     overstock_multiplier = float(config.get("overstock_multiplier", 4))
     correlation_id = correlation_id or new_correlation_id()
+    # SKUs pricing/inventory already acted on this cycle — don't clearance them.
+    skip = set(skip_product_ids or ())
 
     inventory_result = (
         supabase.table("inventory")
@@ -39,7 +43,8 @@ def run_marketing_agent(correlation_id=None) -> dict[str, Any]:
     overstocked = [
         {"product_id": pid, "on_hand": t["on_hand"], "reorder_point": t["reorder_point"]}
         for pid, t in totals.items()
-        if t["reorder_point"] > 0 and t["on_hand"] > t["reorder_point"] * overstock_multiplier
+        if pid not in skip
+        and t["reorder_point"] > 0 and t["on_hand"] > t["reorder_point"] * overstock_multiplier
     ]
     overstocked.sort(key=lambda r: r["on_hand"] - r["reorder_point"], reverse=True)
     candidates = overstocked[:max_items]
@@ -110,7 +115,7 @@ def run_marketing_agent(correlation_id=None) -> dict[str, Any]:
             continue
 
         llm_result = call_llm_json(
-            system_prompt=(
+            system_prompt=load_active_policies(AGENT_NAME) + (
                 "You are an e-commerce marketing copywriter. Given an overstocked product, "
                 'return JSON {"subject": "short email subject", "body": "1-2 sentence promo copy", '
                 '"segment": "target audience label"}.'
@@ -186,6 +191,17 @@ def run_marketing_agent(correlation_id=None) -> dict[str, Any]:
                     "segment": segment,
                 },
             )
+
+        record_action(
+            action_type="campaign",
+            agent_name=AGENT_NAME,
+            entity_type="campaign",
+            entity_id=campaign_id,
+            decision={"campaign_id": campaign_id, "product_id": product["product_id"],
+                      "budget": budget, "segment": segment},
+            correlation_id=correlation_id,
+            autonomy="auto" if auto_approve else "escalated",
+        )
 
     log_id = log_task(
         AGENT_NAME, "overstock_campaign", "completed",

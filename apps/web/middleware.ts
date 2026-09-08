@@ -19,5 +19,10 @@ export async function middleware(request: NextRequest) {
 export const config = {
   // Gate the dashboard and the agent-run / simulate proxies. Auth routes and
   // /login stay open.
-  matcher: ["/dashboard/:path*", "/api/agents/:path*", "/api/simulate/:path*"],
+  matcher: [
+    "/dashboard/:path*",
+    "/api/agents/:path*",
+    "/api/simulate/:path*",
+    "/api/ledger/:path*",
+  ],
 }

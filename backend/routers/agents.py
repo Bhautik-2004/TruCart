@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from ..agents.base import log_task, new_correlation_id
+from ..agents.base import llm_health, log_task, new_correlation_id
 from ..agents.inventory import run_inventory_agent
 from ..agents.logistics import run_logistics_agent
 from ..agents.marketing import run_marketing_agent
@@ -51,6 +51,13 @@ def get_scheduler_status():
         status["last_cycle_at"] = None
         status["last_cycle_status"] = None
     return status
+
+
+@router.get("/llm-status")
+def get_llm_status():
+    """Whether the local LLM is reachable. When it isn't, pricing and support
+    run in deterministic fallback (mostly escalating)."""
+    return llm_health()
 
 
 @router.post("/{agent_name}/run")

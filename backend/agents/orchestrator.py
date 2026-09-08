@@ -35,9 +35,19 @@ def run_orchestrator(correlation_id=None) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     totals = {key: 0 for key in _SUMMARY_KEYS}
 
+    # Conflict guard: SKUs that inventory or pricing already acted on this cycle
+    # are withheld from marketing, so it can't launch a paid clearance on a
+    # product that was just repriced or reordered in the same run.
+    touched_skus: set[str] = set()
+
     for name, runner in _PIPELINE:
         try:
-            outcome = runner(cycle_id)
+            if name == "marketing_agent":
+                outcome = runner(cycle_id, skip_product_ids=touched_skus)
+            else:
+                outcome = runner(cycle_id)
+            if isinstance(outcome, dict):
+                touched_skus.update(outcome.get("touched_product_ids") or [])
             summary = outcome.get("summary", {}) if isinstance(outcome, dict) else {}
             for key in _SUMMARY_KEYS:
                 totals[key] += int(summary.get(key, 0) or 0)

@@ -20,6 +20,9 @@ Two API surfaces:
 | POST | `/api/agents/{agent_name}/run` | — | Run one agent. `agent_name` ∈ `inventory_agent, pricing_agent, support_agent, order_agent, marketing_agent, logistics_agent, orchestrator`. Returns `{ status, agent_name, log_id, correlation_id, summary:{ scanned, auto_executed, escalated } }`; HTTP 500 + `status:"error"` on failure. |
 | GET | `/api/agents/scheduler` | — | `{ enabled, running, interval_minutes, last_cycle_at, last_cycle_status }` for the dashboard's autonomous-mode badge. |
 | POST | `/api/simulate/orders` | `?count=1..50` (default 5), `?trigger_agents=true|false` | Insert realistic `orders` + `order_items` (≈15 % from a new customer). With `trigger_agents=true`, runs one orchestrator cycle afterwards. Returns `{ status, created, new_customers, order_ids, cycle? }`. |
+| GET | `/api/ledger/summary` | — | Autopilot Ledger report cards: `{ headline:{measured_30d,estimated_30d,measured_90d,estimated_90d}, agents:[{agent_name, verified, pending, wins, losses, neutral, win_rate, realized_delta_30d_inr, realized_delta_90d_inr, median_calibration_error_inr, trust_score}], total_actions }`. |
+| GET | `/api/ledger/actions` | `?agent=&grade=&action_type=&limit=` | Raw `agent_action` rows (decision, baseline, outcome, grade) for the drill-down table. |
+| POST | `/api/ledger/verify` | — | Run the verification sweep now: grade every due `agent_action`, then re-evaluate autonomy. Returns `{ due, verified, skipped, autonomy_proposals }`. |
 
 ## Next.js route handlers (browser-facing)
 
@@ -29,14 +32,17 @@ Two API surfaces:
 | POST | `/api/auth/logout` | — | Clears the cookie. |
 | POST | `/api/agents/[agent_name]/run` | FastAPI `/api/agents/{agent_name}/run` | Auth-gated. |
 | POST | `/api/simulate/orders` | FastAPI `/api/simulate/orders` | Auth-gated; passes `count` / `trigger_agents` through. |
+| GET/POST | `/api/ledger/{summary,actions,verify}` | FastAPI `/api/ledger/*` | Auth-gated Autopilot Ledger proxies. |
 
 ## Server actions (not REST — invoked from dashboard components)
 
 Defined in `apps/web/app/dashboard/actions.ts`, each runs on the server with the
 Supabase service-role client and (where noted) the verified session user:
 
-`updateReviewStatus(reviewId, status, { reviewerId, note })` · `updateProfileName`
-· `changePassword` · `deactivateAccount` · `updateAgentConfig(agent, key, value)`
-· `updateStoreConfig` · `updateOrderStatus` · `updateTicketStatus` ·
-`insertTicket` / `insertTicketMessage` · `insertCampaign` · `insertProduct` ·
-notification read/delete helpers.
+`updateReviewStatus(reviewId, status, { note, makeStandingRule })` — resolves the
+reviewer from the verified session, runs the domain cascade with error checks
+before flipping the queue row, and handles `autonomy_adjustment` items ·
+`updateProfileName` · `changePassword` · `deactivateAccount` ·
+`updateAgentConfig(agent, key, value)` · `updateStoreConfig` · `updateOrderStatus`
+· `updateTicketStatus` · `insertTicket` / `insertTicketMessage` · `insertCampaign`
+· `insertProduct` · notification read/delete helpers.

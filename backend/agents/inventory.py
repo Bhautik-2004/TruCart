@@ -7,11 +7,14 @@ from .base import (
     call_llm_json,
     enqueue_review,
     get_store_config,
+    load_active_policies,
     load_agent_config,
     log_task,
     new_correlation_id,
     notify,
 )
+from .demand import units_sold_by_product, window_bounds
+from .ledger import record_action
 
 AGENT_NAME = "inventory_agent"
 
@@ -40,21 +43,34 @@ def _receive_due_purchase_orders(supabase: Any, receiving_lead_days: float, max_
     received: list[dict[str, Any]] = []
     today_iso = date.today().isoformat()
     for po in due:
-        inv = (
-            supabase.table("inventory")
-            .select("inventory_id, quantity_on_hand")
-            .eq("product_id", po["product_id"])
-            .limit(1)
-            .execute()
-            .data
-        )
-        if not inv:
-            continue
-        new_on_hand = inv[0]["quantity_on_hand"] + po["quantity"]
-        supabase.table("inventory").update(
-            {"quantity_on_hand": new_on_hand, "last_restock_date": today_iso}
-        ).eq("inventory_id", inv[0]["inventory_id"]).execute()
-        supabase.table("purchase_orders").update({"status": "received"}).eq("po_id", po["po_id"]).execute()
+        # Prefer the atomic RPC (migration 016): one row-locked, status-guarded
+        # statement, so a scheduled tick racing a manual run can't double-count.
+        # Fall back to the inline read-modify-write if the RPC isn't installed.
+        try:
+            rpc_res = supabase.rpc("receive_purchase_order", {"p_po_id": po["po_id"]}).execute()
+            outcome = rpc_res.data if isinstance(rpc_res.data, str) else (rpc_res.data or [None])[0]
+            if outcome == "skipped":
+                continue
+            if outcome != "received":
+                raise RuntimeError("rpc unavailable")
+        except Exception:
+            inv = (
+                supabase.table("inventory")
+                .select("inventory_id, quantity_on_hand")
+                .eq("product_id", po["product_id"])
+                .order("quantity_on_hand", desc=False)
+                .limit(1)
+                .execute()
+                .data
+            )
+            if not inv:
+                continue
+            new_on_hand = inv[0]["quantity_on_hand"] + po["quantity"]
+            supabase.table("inventory").update(
+                {"quantity_on_hand": new_on_hand, "last_restock_date": today_iso}
+            ).eq("inventory_id", inv[0]["inventory_id"]).execute()
+            supabase.table("purchase_orders").update({"status": "received"}).eq("po_id", po["po_id"]).execute()
+
         received.append({"po_id": po["po_id"], "po_number": po["po_number"], "quantity": po["quantity"]})
         notify(
             "Stock received",
@@ -119,10 +135,14 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
     product_ids = [c["product_id"] for c in candidates]
     products = {
         p["product_id"]: p
-        for p in (supabase.table("products").select("product_id, sku, name, cost_price").in_("product_id", product_ids).execute().data or [])
+        for p in (supabase.table("products").select("product_id, sku, name, cost_price, current_price").in_("product_id", product_ids).execute().data or [])
     }
     suppliers_result = supabase.table("suppliers").select("supplier_id, name, lead_time_days").eq("is_active", True).limit(1).execute()
     supplier = (suppliers_result.data or [{}])[0]
+
+    # Trailing 30-day demand per candidate product, for the ledger baseline.
+    _demand_start, _ = window_bounds(30)
+    units_30d = units_sold_by_product(supabase, _demand_start, product_ids=product_ids)
 
     # One batch LLM call for human-readable justifications; fall back to a
     # deterministic string per item if Ollama is unavailable.
@@ -137,7 +157,7 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
         for c in candidates
     ]
     llm_result = call_llm_json(
-        system_prompt=(
+        system_prompt=load_active_policies(AGENT_NAME) + (
             "You are an inventory restocking assistant. Given a list of low-stock products, "
             'return JSON {"items": [{"sku": "...", "justification": "one short sentence"}]}.'
         ),
@@ -155,11 +175,13 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
     auto_approved = 0
     escalated = 0
     po_results = []
+    touched_product_ids: list[str] = []
 
     for candidate in candidates:
         product = products.get(candidate["product_id"])
         if not product or not supplier.get("supplier_id"):
             continue
+        touched_product_ids.append(candidate["product_id"])
         quantity = candidate["reorder_quantity"]
         unit_cost = float(product["cost_price"])
         total_cost = quantity * unit_cost
@@ -231,6 +253,27 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
                     payload={**review_payload, "reference_id": po_id},
                 )
 
+        _avail = candidate["quantity_on_hand"] - candidate["quantity_reserved"]
+        _margin_unit = float(product.get("current_price") or 0) - unit_cost
+        record_action(
+            action_type="purchase_order",
+            agent_name=AGENT_NAME,
+            entity_type="purchase_order",
+            entity_id=po_id,
+            decision={
+                "product_id": candidate["product_id"], "po_number": po_number,
+                "quantity": quantity, "unit_cost": unit_cost, "total_cost": total_cost,
+            },
+            correlation_id=correlation_id,
+            autonomy="auto" if under_limit else "escalated",
+            context={
+                "daily_velocity": units_30d.get(candidate["product_id"], 0) / 30.0,
+                "available": _avail,
+                "lead_time_days": supplier.get("lead_time_days") or 7,
+                "margin_per_unit": _margin_unit,
+            },
+        )
+
     log_id = log_task(
         AGENT_NAME, "stock_reconciliation", "completed",
         input_data={"scanned": len(inventory_result.data or []), "candidates": len(candidates)},
@@ -244,5 +287,6 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
         "agent_name": AGENT_NAME,
         "log_id": log_id,
         "correlation_id": str(correlation_id),
+        "touched_product_ids": touched_product_ids,
         "summary": {"scanned": len(candidates), "auto_executed": auto_approved + len(received), "escalated": escalated},
     }

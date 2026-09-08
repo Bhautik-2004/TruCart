@@ -19,27 +19,39 @@ export default async function AgentsPage() {
       .order("config_key"),
   ])
 
-  let scheduler: {
-    enabled: boolean
-    running: boolean
-    interval_minutes: number
-    last_cycle_at: string | null
-    last_cycle_status: string | null
-  } | null = null
-  try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/agents/scheduler`, {
-      cache: "no-store",
-    })
-    if (res.ok) scheduler = await res.json()
-  } catch {
-    // backend down — the indicator just shows "unknown"
+  const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"
+  const getJson = async (path: string) => {
+    try {
+      const res = await fetch(`${API}${path}`, { cache: "no-store", signal: AbortSignal.timeout(2500) })
+      return res.ok ? await res.json() : null
+    } catch {
+      return null
+    }
   }
+
+  const [scheduler, ledger, llm] = await Promise.all([
+    getJson("/api/agents/scheduler") as Promise<{
+      enabled: boolean; running: boolean; interval_minutes: number
+      last_cycle_at: string | null; last_cycle_status: string | null
+    } | null>,
+    getJson("/api/ledger/summary") as Promise<{
+      agents: { agent_name: string; trust_score: number; win_rate: number; verified: number }[]
+    } | null>,
+    getJson("/api/agents/llm-status") as Promise<{
+      configured: boolean; reachable: boolean; model: string
+    } | null>,
+  ])
+
+  const trustByAgent: Record<string, { trust_score: number; win_rate: number; verified: number }> = {}
+  for (const a of ledger?.agents ?? []) trustByAgent[a.agent_name] = a
 
   return (
     <AgentsClient
       taskLogs={taskLogs || []}
       agentConfig={agentConfig || []}
       scheduler={scheduler}
+      trustByAgent={trustByAgent}
+      llm={llm}
     />
   )
 }

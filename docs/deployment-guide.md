@@ -19,8 +19,11 @@
 1. **Supabase project.** Create it, then in the SQL editor run, in order:
    1. `database/migrations/001_*.sql` … `005_*.sql`
    2. every file in `database/migrations/seed_data/` (`00_*` … `22_*`)
-   3. `database/migrations/006_*.sql` … `015_*.sql`
+   3. `database/migrations/006_*.sql` … `016_*.sql`
    Confirm `pgvector` is enabled (migration 001 does this).
+   `016_ledger.sql` (Autopilot Ledger tables + the `receive_purchase_order` /
+   `release_order_reservation` RPCs) is required — agents run without it but the
+   Ledger is inert and reservations aren't released on cancel.
    Note the project URL and the **service-role** key.
 2. **Knowledge-base embeddings** (support-agent RAG), once, with an LLM/embeddings
    endpoint reachable: `npm run seed:rag`.

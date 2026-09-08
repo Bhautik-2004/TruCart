@@ -7,11 +7,14 @@ from .base import (
     call_llm_json,
     enqueue_review,
     get_store_config,
+    load_active_policies,
     load_agent_config,
     log_task,
     new_correlation_id,
     notify,
 )
+from .demand import units_sold_by_product
+from .ledger import record_action
 
 AGENT_NAME = "pricing_agent"
 
@@ -116,31 +119,7 @@ def run_pricing_agent(correlation_id=None) -> dict[str, Any]:
 
     # --- Demand: units sold in the trailing window (excl. cancelled/returned) --
     demand_cutoff = (datetime.now(timezone.utc) - timedelta(days=demand_window_days)).isoformat()
-    recent_orders = (
-        supabase.table("orders")
-        .select("order_id, status")
-        .gte("placed_at", demand_cutoff)
-        .execute()
-        .data
-        or []
-    )
-    sellable_order_ids = [
-        o["order_id"] for o in recent_orders
-        if o.get("status") not in ("cancelled", "returned")
-    ]
-    units_sold: dict[str, int] = {}
-    for i in range(0, len(sellable_order_ids), 200):
-        chunk = sellable_order_ids[i:i + 200]
-        for row in (
-            supabase.table("order_items")
-            .select("product_id, quantity")
-            .in_("order_id", chunk)
-            .execute()
-            .data
-            or []
-        ):
-            pid = row["product_id"]
-            units_sold[pid] = units_sold.get(pid, 0) + int(row.get("quantity") or 0)
+    units_sold = units_sold_by_product(supabase, demand_cutoff)
 
     # --- Build candidates ----------------------------------------------------
     candidates: list[dict[str, Any]] = []
@@ -241,7 +220,7 @@ def run_pricing_agent(correlation_id=None) -> dict[str, Any]:
         for c in candidates
     ]
     llm_result = call_llm_json(
-        system_prompt=(
+        system_prompt=load_active_policies(AGENT_NAME) + (
             "You are a retail pricing analyst. You are NOT doing competitor analysis. "
             "For each product decide whether our selling price should change based on our "
             "own economics: the unit cost basis, current gross margin versus the target "
@@ -268,6 +247,7 @@ def run_pricing_agent(correlation_id=None) -> dict[str, Any]:
     auto_executed = 0
     escalated = 0
     changes: list[dict[str, Any]] = []
+    touched_product_ids: list[str] = []
 
     for c in candidates:
         product = c["product"]
@@ -413,10 +393,28 @@ def run_pricing_agent(correlation_id=None) -> dict[str, Any]:
                 reference_type="price_history",
             )
 
+        touched_product_ids.append(product["product_id"])
+        record_action(
+            action_type="price_change",
+            agent_name=AGENT_NAME,
+            entity_type="product",
+            entity_id=product["product_id"],
+            decision={
+                "product_id": product["product_id"], "history_id": history_id, "sku": sku,
+                "old_price": current_price, "new_price": proposed_price,
+                "effective_cost": round(effective_cost, 2), "action": action, "urgency": urgency,
+            },
+            correlation_id=correlation_id,
+            autonomy="escalated" if escalate else "auto",
+            context={"daily_velocity": (c["units_sold"] / demand_window_days) if demand_window_days else 0.0},
+        )
+
     summary = {"scanned": len(candidates), "auto_executed": auto_executed, "escalated": escalated}
-    return _finish(
+    result = _finish(
         "price_update", "completed", summary,
         input_data={"candidates": len(candidates)},
         output_data={"changes": changes, "auto_executed": auto_executed, "escalated": escalated},
         model=None if llm_result is None else os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
     )
+    result["touched_product_ids"] = touched_product_ids
+    return result

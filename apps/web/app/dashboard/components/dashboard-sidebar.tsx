@@ -26,7 +26,8 @@ import {
   Forklift,
   Bot,
   ListMinus,
-  Logs
+  Logs,
+  Gauge
 } from "lucide-react"
 import { LogoutButton } from "./logout-button"
 
@@ -48,6 +49,7 @@ const navItems = [
       { title: "Marketing", url: "/dashboard/marketing", icon: Ad },
       { title: "Logistics", url: "/dashboard/logistics", icon: Forklift },
       { title: "Agents", url: "/dashboard/agents", icon: Bot },
+      { title: "Autopilot Ledger", url: "/dashboard/ledger", icon: Gauge },
       { title: "Audit Logs", url: "/dashboard/audits", icon: Logs },
 
     ],

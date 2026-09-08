@@ -547,3 +547,15 @@ The **"LangGraph Checkpoint Tables"** section above describes the aspirational
 AWS/LangGraph design. This implementation uses a plain sequential orchestrator
 (`backend/agents/orchestrator.py`) with no checkpointer, so those tables are not
 created.
+
+## Migration 016 addendum — Autopilot Ledger
+
+| Object | Purpose |
+|---|---|
+| **`agent_action`** | One row per judgement-call decision (pricing / inventory / marketing / support). Columns: `action_id` PK, `correlation_id`, `agent_name`, `action_type` (`price_change`, `purchase_order`, `campaign`, `refund`, …), `entity_type`, `entity_id`, `decision` JSONB (the params), `baseline` JSONB (`{formula, inputs, baseline_delta_inr, projected_delta_inr}` — the counterfactual computed at decision time), `autonomy` (`auto`/`escalated`/`human_approved`/`human_rejected`), `measurability` (`measured`/`estimated`/`unmeasurable`), `verify_after`, `status` (`pending`/`verified`/`skipped`), `outcome` JSONB, `realized_delta_inr`, `baseline_delta_inr`, `calibration_error`, `grade` (`win`/`loss`/`neutral`/`unmeasurable`), `created_at`, `verified_at`. Indexed on `(agent_name, verified_at)`, `(status, verify_after)`, `(correlation_id)`. Written by `backend/agents/ledger.py`; graded by `backend/agents/verification.py`. |
+| **`agent_policy`** | Standing natural-language rules a human attached when rejecting a review item (`policy_id`, `agent_name`, `rule_text`, `created_from_review_id` → `review_queue`, `active`, `created_at`). `base.py load_active_policies()` prepends the active rules to that agent's LLM system prompt. |
+| RPC **`receive_purchase_order(p_po_id)`** | Atomically flip an `approved` PO to `received` and add its quantity to `inventory.quantity_on_hand` (row-locked, status-guarded — safe against a manual run overlapping a scheduler tick). Returns `'received'` or `'skipped'`. |
+| RPC **`release_order_reservation(p_order_id)`** | Decrement `inventory.quantity_reserved` by an order's line quantities when it is cancelled / refunded, so availability doesn't drift. |
+| `store_config` keys | `ledger_settle_days_price` (14), `ledger_settle_days_po` (7), `ledger_settle_days_campaign` (14), `ledger_settle_days_refund` (30), `ledger_win_rate_floor` (0.5), `ledger_win_rate_ceiling` (0.8), `ledger_min_sample` (8), `support_handle_cost_inr` (120). |
+| `review_queue` `item_type` | new value `autonomy_adjustment` — an Autopilot-Ledger proposal to tighten/widen an agent's auto-approve knob; `payload` carries `{agent_name, scope, key, from, to, direction, win_rate, sample, evidence_action_ids}`. |
+| Index | `agent_task_log(correlation_id)` — the cycle grouping key, previously unindexed. |

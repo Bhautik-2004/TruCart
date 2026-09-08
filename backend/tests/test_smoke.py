@@ -49,6 +49,8 @@ class FakeSupabase:
 AGENT_MODULES = [
     "backend.db",
     "backend.agents.base",
+    "backend.agents.ledger",
+    "backend.agents.verification",
     "backend.agents.inventory",
     "backend.agents.pricing",
     "backend.agents.orders",
@@ -121,6 +123,9 @@ def test_app_registers_expected_routes():
     assert "/api/agents/scheduler" in paths
     assert "/api/simulate/orders" in paths
     assert "/api/auth/change-password" in paths
+    assert "/api/ledger/summary" in paths
+    assert "/api/ledger/verify" in paths
+    assert "/api/agents/llm-status" in paths
 
 
 def test_notify_is_best_effort(monkeypatch):

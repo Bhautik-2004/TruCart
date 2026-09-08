@@ -2,7 +2,7 @@
 
 | Document | What it covers |
 |---|---|
-| [`architecture.md`](architecture.md) | Solution architecture of the **built** system — components, the six agents, multi-agent coordination, autonomy, security. Includes a Mermaid diagram. |
+| [`architecture.md`](architecture.md) | Solution architecture of the **built** system — components, the six agents, the **Autopilot Ledger** (§4a), multi-agent coordination, autonomy, security. Includes a Mermaid diagram. |
 | [`cost-estimate.md`](cost-estimate.md) | Estimated costing: **$0/month**, free-tier service mapping with ceilings. AWS-at-scale figures in the appendix. |
 | [`api-reference.md`](api-reference.md) | FastAPI endpoints, Next.js route handlers, and dashboard server actions. |
 | [`deployment-guide.md`](deployment-guide.md) | Free-tier cloud deployment runbook (pending execution). |
@@ -20,3 +20,7 @@ with the docs in this folder, the docs here describe what is actually running.
 - **Presentation deck** — only a text outline exists
   (`../ai-ecommerce-platform-plan.md` §12).
 - **Cloud deployment** — see `deployment-guide.md`.
+- **Frontend unit tests** — CI runs `pytest` + `turbo lint/typecheck/build`; a
+  Vitest/RTL suite for the dashboard is not yet added.
+- **Real marketing/support outcome signals** — the Ledger models these; wiring a
+  real ESP and CSAT would upgrade them from "estimated" to "measured".

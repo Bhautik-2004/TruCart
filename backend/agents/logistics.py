@@ -68,7 +68,7 @@ def run_logistics_agent(correlation_id=None) -> dict[str, Any]:
             f"Order {order['order_number']} handed to {carrier}.",
             type="success",
             reference_id=order["order_id"],
-            reference_type="shipment",
+            reference_type="order",
         )
 
     # 2. Progress label_created shipments to in_transit once they have dwelt in

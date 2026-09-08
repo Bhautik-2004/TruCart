@@ -8,10 +8,12 @@ from .base import (
     enqueue_review,
     get_store_config,
     load_agent_config,
+    load_active_policies,
     log_task,
     new_correlation_id,
     notify,
 )
+from .ledger import record_action
 from .rag import format_context, retrieve
 
 AGENT_NAME = "support_agent"
@@ -82,7 +84,7 @@ def run_support_agent(correlation_id=None) -> dict[str, Any]:
         kb_ids = [c["kb_id"] for c in kb_chunks if c.get("kb_id")]
         kb_context = format_context(kb_chunks)
 
-        system_prompt = (
+        system_prompt = load_active_policies(AGENT_NAME) + (
             "You are a customer support triage assistant for an e-commerce store. "
             "Read the ticket and decide how to handle it. Return JSON: "
             '{"resolution_text": "...", "confidence_score": 0.0-1.0, '
@@ -143,7 +145,7 @@ def run_support_agent(correlation_id=None) -> dict[str, Any]:
         elif action == "refund":
             order_row = (
                 supabase.table("orders")
-                .select("total_amount")
+                .select("total_amount, status")
                 .eq("order_id", ticket["order_id"])
                 .limit(1)
                 .execute()
@@ -177,6 +179,15 @@ def run_support_agent(correlation_id=None) -> dict[str, Any]:
                 )
                 outcomes.append({"ticket_id": ticket["ticket_id"], "action": "escalated_refund", "reason": "amount_undetermined", "kb_ids": kb_ids})
             elif refund_amount <= refund_auto_approve_limit:
+                # Release any stock this order had reserved before cancelling it,
+                # so availability doesn't silently drift down.
+                if (order_row[0].get("status") or "") in ("confirmed", "processing", "shipped"):
+                    try:
+                        supabase.rpc("release_order_reservation", {"p_order_id": ticket["order_id"]}).execute()
+                    except Exception:
+                        # RPC absent until migration 016 is applied — the refund
+                        # still proceeds; reservation is reconciled later.
+                        pass
                 supabase.table("orders").update({"status": "cancelled", "payment_status": "refunded"}).eq("order_id", ticket["order_id"]).execute()
                 supabase.table("support_tickets").update({
                     "status": "resolved",
@@ -192,6 +203,16 @@ def run_support_agent(correlation_id=None) -> dict[str, Any]:
                     type="success",
                     reference_id=ticket["ticket_id"],
                     reference_type="support_ticket",
+                )
+                record_action(
+                    action_type="refund",
+                    agent_name=AGENT_NAME,
+                    entity_type="support_ticket",
+                    entity_id=ticket["ticket_id"],
+                    decision={"ticket_id": ticket["ticket_id"], "order_id": ticket["order_id"],
+                              "refund_amount": refund_amount},
+                    correlation_id=correlation_id,
+                    autonomy="auto",
                 )
             else:
                 escalated += 1
@@ -213,6 +234,16 @@ def run_support_agent(correlation_id=None) -> dict[str, Any]:
                     },
                 )
                 outcomes.append({"ticket_id": ticket["ticket_id"], "action": "escalated_refund", "amount": refund_amount, "order_total": order_total, "kb_ids": kb_ids})
+                record_action(
+                    action_type="refund",
+                    agent_name=AGENT_NAME,
+                    entity_type="support_ticket",
+                    entity_id=ticket["ticket_id"],
+                    decision={"ticket_id": ticket["ticket_id"], "order_id": ticket["order_id"],
+                              "refund_amount": refund_amount},
+                    correlation_id=correlation_id,
+                    autonomy="escalated",
+                )
 
         else:
             escalated += 1

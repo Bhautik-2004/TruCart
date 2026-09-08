@@ -50,7 +50,10 @@ flowchart TB
     RSC --> PROXY --> ROUTES
     ROUTES --> ORCH --> AGENTS
     SCHED --> ORCH
+    SCHED --> SWEEP["verification sweep<br/>(Autopilot Ledger)"]
     AGENTS --> BASE
+    AGENTS -->|record_action| PG
+    SWEEP --> PG
     BASE --> PG
     BASE --> VEC
     BASE --> LLM
@@ -109,6 +112,44 @@ Coordination is **sequential + shared-state**, deliberately simple:
 
 There is no event bus. Adding DB-trigger / webhook triggering is noted as future
 work.
+
+## 4a. Autopilot Ledger (verified-outcome accounting)
+
+The distinguishing feature. Every judgement call the pricing / inventory /
+marketing / support agents make (auto-executed **or** escalated) is captured by
+`backend/agents/ledger.py` `record_action(...)` as one `agent_action` row with:
+
+- the decision parameters,
+- a **counterfactual baseline** — the "do nothing" ₹ outcome, computed now from
+  data the agent already has (trailing sales velocity, margins, stock cover),
+  with the formula and its inputs stored so it is auditable, and
+- `verify_after` — a settle window per action type (`store_config`
+  `ledger_settle_days_*`).
+
+`backend/agents/verification.py` `run_verification_sweep()` (a second APScheduler
+job, or `POST /api/ledger/verify`) measures what actually happened from the
+operational tables, books `realized_delta_inr` vs `baseline_delta_inr`, and
+grades each decision `win | loss | neutral`. `evaluate_autonomy()` then scores
+the agent over its last `ledger_min_sample` verified decisions; if the win-rate
+is out of the `[ledger_win_rate_floor, ledger_win_rate_ceiling]` band it enqueues
+a `review_queue` item of `item_type='autonomy_adjustment'` proposing a concrete,
+one-click config change (e.g. `budget_auto_approve_limit 200 → 120`), linked to
+the losing decisions. Approving it in `/dashboard/review` writes the new
+`store_config` / `agent_config` value.
+
+`/dashboard/ledger` surfaces the per-agent **Trust Score**, realized ₹
+contribution (measured vs estimated split — marketing/support outcomes are
+modelled, not instrumented, and labelled as such), and a drill-down to every
+decision's baseline formula and actual outcome. Operator rejections can attach a
+one-line standing rule (`agent_policy`) that `base.py` `load_active_policies()`
+injects into that agent's LLM prompt on every future run.
+
+The order and logistics agents are mechanical (no LLM judgement, fully simulated
+lifecycle) and are not scored by the Ledger.
+
+The agents run **independently of the Ledger**: `record_action` is best-effort
+(a failed insert is logged and swallowed), so a decision is never blocked by
+Ledger unavailability — including when `016_ledger.sql` has not been applied.
 
 ## 5. Autonomy
 

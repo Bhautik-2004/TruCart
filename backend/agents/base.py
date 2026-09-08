@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -89,6 +90,21 @@ def get_ollama_client() -> Any:
 
 def get_ollama_model() -> str:
     return os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+
+
+def llm_health() -> dict[str, Any]:
+    """Cheap reachability probe for the dashboard. `reachable` is best-effort:
+    when it is False the pricing and support agents fall back to deterministic
+    behaviour (mostly escalating)."""
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    configured = bool(os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_MODEL"))
+    reachable = False
+    try:
+        get_ollama_client().with_options(timeout=2.0).models.list()
+        reachable = True
+    except Exception:
+        reachable = False
+    return {"configured": configured, "base_url": base_url, "model": get_ollama_model(), "reachable": reachable}
 
 
 def call_llm_json(
@@ -284,7 +300,22 @@ def notify(
     order, agent, system.
     """
     try:
-        get_supabase().table("notifications").insert({
+        sb = get_supabase()
+        # Dedupe: skip an identical (type, title, reference_id) fired in the last
+        # 10 minutes, so a tight scheduler loop doesn't flood the feed. Fail-open:
+        # a read error here must not suppress the notification.
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+            dup_q = (
+                sb.table("notifications").select("notification_id")
+                .eq("type", type).eq("title", title).gte("created_at", cutoff).limit(1)
+            )
+            dup_q = dup_q.eq("reference_id", reference_id) if reference_id else dup_q.is_("reference_id", "null")
+            if dup_q.execute().data:
+                return
+        except Exception:
+            pass
+        sb.table("notifications").insert({
             "title": title,
             "message": message,
             "type": type,
@@ -293,6 +324,26 @@ def notify(
         }).execute()
     except Exception:
         pass
+
+
+def load_active_policies(agent_name: str) -> str:
+    """Standing natural-language rules a human attached when rejecting this
+    agent's review items (see agent_policy / migration 016). Returned as a
+    newline block to prepend to the agent's LLM system prompt; '' if none."""
+    try:
+        rows = (
+            get_supabase().table("agent_policy")
+            .select("rule_text")
+            .eq("agent_name", agent_name).eq("active", True)
+            .order("created_at", desc=True).limit(20)
+            .execute().data or []
+        )
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    lines = "\n".join(f"- {r['rule_text']}" for r in rows if r.get("rule_text"))
+    return f"Standing rules from the operator (must be obeyed):\n{lines}\n\n"
 
 
 def new_correlation_id() -> UUID:

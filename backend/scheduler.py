@@ -20,12 +20,20 @@ def _interval_minutes() -> float:
         return 10.0
 
 
+def _verify_interval_hours() -> float:
+    try:
+        return float(os.getenv("LEDGER_VERIFY_INTERVAL_HOURS", "6"))
+    except ValueError:
+        return 6.0
+
+
 def scheduler_status() -> dict:
     """Config-level view of autonomous mode, for the dashboard indicator."""
     return {
         "enabled": _env_flag("SCHEDULER_ENABLED", False),
         "running": _scheduler is not None,
         "interval_minutes": _interval_minutes(),
+        "verify_interval_hours": _verify_interval_hours(),
     }
 
 
@@ -48,6 +56,7 @@ def start_scheduler():
     from apscheduler.schedulers.background import BackgroundScheduler
 
     from .agents.orchestrator import run_orchestrator
+    from .agents.verification import run_verification_sweep
 
     def _tick():
         try:
@@ -59,17 +68,28 @@ def start_scheduler():
         except Exception:  # noqa: BLE001 - a bad tick must not kill the scheduler
             logger.exception("orchestrator cycle failed")
 
+    def _verify_tick():
+        try:
+            result = run_verification_sweep()
+            logger.info("ledger verification sweep: %s", result)
+        except Exception:  # noqa: BLE001
+            logger.exception("ledger verification sweep failed")
+
+    verify_hours = _verify_interval_hours()
     _scheduler = BackgroundScheduler(timezone="UTC")
     _scheduler.add_job(
-        _tick,
-        "interval",
-        minutes=interval_minutes,
-        id="orchestrator_cycle",
-        max_instances=1,
-        coalesce=True,
+        _tick, "interval", minutes=interval_minutes,
+        id="orchestrator_cycle", max_instances=1, coalesce=True,
+    )
+    _scheduler.add_job(
+        _verify_tick, "interval", hours=verify_hours,
+        id="ledger_verification_sweep", max_instances=1, coalesce=True,
     )
     _scheduler.start()
-    logger.info("scheduler started: orchestrator every %s min", interval_minutes)
+    logger.info(
+        "scheduler started: orchestrator every %s min, ledger verification every %s h",
+        interval_minutes, verify_hours,
+    )
     return _scheduler
 
 

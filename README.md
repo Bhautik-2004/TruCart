@@ -15,7 +15,7 @@ Demo scenario: **TechBazaar**, a fictional Indian electronics retailer.
 |---|---|---|
 | Dashboard | Next.js 16 (App Router) + shadcn/ui, in `apps/web` | Server components read Supabase directly; server actions for mutations. |
 | Backend | FastAPI, in `backend/` | Auth + `POST /api/agents/{name}/run` + orchestrator + `POST /api/simulate/orders`. Optional APScheduler loop. |
-| Database | Supabase Postgres | Schema + seed as raw SQL in `database/migrations/` (001–015). RLS policies defined (see limitations). |
+| Database | Supabase Postgres | Schema + seed as raw SQL in `database/migrations/` (001–016). RLS policies defined (see limitations). |
 | LLM | Local **Ollama** (`qwen2.5:7b`) via the OpenAI-compatible API, or any free OpenAI-compatible endpoint | One JSON call per agent run; deterministic fallback if unreachable. |
 | Tracing | **Langfuse** (optional) | Best-effort; if keys are unset, agents run with tracing silently disabled. |
 
@@ -45,6 +45,12 @@ Full docs are in [`docs/`](docs/README.md):
 [deployment guide](docs/deployment-guide.md) ·
 [DB schema reference](database-schema-reference.md).
 
+**Autopilot Ledger** (`/dashboard/ledger`) is the headline capability: every
+autonomous decision is booked against a counterfactual "do nothing" baseline,
+verified against the real outcome after a settle window, and rolled up into a
+per-agent Trust Score. Agents that underperform get a one-click proposal to
+tighten their own auto-approve limits (`docs/architecture.md` §4a).
+
 ---
 
 ## Scope & limitations (read before evaluating)
@@ -69,6 +75,9 @@ This is a time-boxed build. The following are **deliberately simulated**, not in
   whole-order only (no partial / RMA).
 - **Customer notifications** are internal only — the `notifications` feed on the dashboard;
   no outbound email/SMS to customers.
+- **Autopilot Ledger** grades the four judgement-call agents (pricing, inventory, marketing,
+  support). Marketing and support outcomes are *modelled* (no real campaign metrics / CSAT),
+  and are labelled "estimated" in the UI; order/logistics are not scored.
 - **RAG:** the support agent retrieves from `knowledge_base` (pgvector) before triaging,
   but only after you run the embedding backfill; without it, it triages with no context.
 - **Auth** is a signed httpOnly-cookie session (`jose` HS256, verified in `middleware.ts`)
@@ -115,7 +124,13 @@ is the only place it belongs.
 In the Supabase SQL editor, run in order:
 1. `database/migrations/001_*.sql` … `005_*.sql`
 2. every file in `database/migrations/seed_data/` in numeric order (`00_*` … `22_*`)
-3. `database/migrations/006_*.sql` … `015_*.sql`
+3. `database/migrations/006_*.sql` … `016_*.sql`
+
+`016_ledger.sql` is required for the Autopilot Ledger (tables `agent_action` /
+`agent_policy`, RPCs `receive_purchase_order` / `release_order_reservation`).
+The six agents still run without it — decisions just aren't recorded and stock
+reservations aren't released on cancel/refund — so apply it before relying on
+`/dashboard/ledger`.
 
 The seeded admin is `admin@techbazaar.local` with password `trucart-demo` (a real
 bcrypt hash ships in the seed, so you can log in immediately). To use a different
@@ -154,7 +169,7 @@ backend/
   routers/simulate.py  POST /api/simulate/orders  (synthetic order intake)
   agents/            one module per agent + orchestrator.py + base.py
   scheduler.py       APScheduler orchestrator loop (SCHEDULER_ENABLED)
-database/migrations/  numbered schema + seed SQL (001–015)
+database/migrations/  numbered schema + seed SQL (001–016)
 docs/                architecture, cost, API, deployment
 packages/ui/         shared shadcn component library
 ```
