@@ -1,17 +1,21 @@
 import { SignJWT, jwtVerify, type JWTPayload } from "jose"
 
-const secretString =
-  process.env.SESSION_SECRET || "dev-only-insecure-secret-change-me"
+const FALLBACK_SECRET = "dev-only-insecure-secret-change-me"
+let warnedMissingSecret = false
 
-if (!process.env.SESSION_SECRET) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("SESSION_SECRET must be set in production")
+function getSecret() {
+  const secretString = process.env.SESSION_SECRET
+  if (!secretString) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("SESSION_SECRET must be set in production")
+    }
+    if (!warnedMissingSecret) {
+      warnedMissingSecret = true
+      console.warn("[session] SESSION_SECRET not set — using an insecure dev fallback")
+    }
   }
-  // eslint-disable-next-line no-console
-  console.warn("[session] SESSION_SECRET not set — using an insecure dev fallback")
+  return new TextEncoder().encode(secretString || FALLBACK_SECRET)
 }
-
-const secret = new TextEncoder().encode(secretString)
 
 export const SESSION_COOKIE = "trucart_session"
 export const SESSION_MAX_AGE = 60 * 60 * 8 // 8 hours
@@ -33,7 +37,7 @@ export async function signSession(user: SessionUser): Promise<string> {
     .setSubject(user.id)
     .setIssuedAt()
     .setExpirationTime(`${SESSION_MAX_AGE}s`)
-    .sign(secret)
+    .sign(getSecret())
 }
 
 export async function verifySession(
@@ -41,7 +45,7 @@ export async function verifySession(
 ): Promise<JWTPayload | null> {
   if (!token) return null
   try {
-    const { payload } = await jwtVerify(token, secret)
+    const { payload } = await jwtVerify(token, getSecret())
     return payload
   } catch {
     return null
