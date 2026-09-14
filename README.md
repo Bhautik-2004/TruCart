@@ -7,6 +7,11 @@ configured guardrails or push a decision to a human **review queue**.
 
 Demo scenario: **TechBazaar**, a fictional Indian electronics retailer.
 
+**Live demo:** http://18.225.37.99:80/ (deployed on an AWS EC2 free-tier instance; login
+`admin@techbazaar.local` / `trucart-demo`)
+
+**Team:** Bhautik Vaghamshi · Daksh Patel (B. Tech SEM-7)
+
 ---
 
 ## What actually runs in this build
@@ -158,6 +163,67 @@ Open http://localhost:3000.
 
 ---
 
+## Docker & AWS deployment
+
+The app ships as two containers: `backend/Dockerfile` (FastAPI, uvicorn) and
+`apps/web/Dockerfile` (Next.js, standalone output). Prebuilt images are published to
+Docker Hub as `bhautik2004/trucart-backend` and `bhautik2004/trucart-web`.
+
+### Test locally with Docker
+
+```bash
+docker compose --env-file .env.local up -d --build   # builds both images and starts them
+docker compose logs -f                                 # watch logs
+docker compose down                                     # stop
+```
+Frontend on http://localhost, backend on http://localhost:8000. `NEXT_PUBLIC_API_URL`
+is baked in at **build time**, so rerun with `--build` (not just `up -d`) after
+changing it.
+
+### Deploy to AWS (EC2 free tier)
+
+`docker-compose.prod.yml` pulls the prebuilt images from Docker Hub instead of
+building on the instance — a t2.micro (1 vCPU / 1 GB RAM) can't reliably run
+`next build`, but running the already-built containers fits comfortably (~150 MB
+combined).
+
+1. Launch a `t2.micro`/`t3.micro` EC2 instance (Amazon Linux 2023, free tier),
+   using `deploy/ec2-bootstrap.sh` as the instance **User data** — it installs
+   Docker + Compose and clones this repo.
+2. Open inbound ports 80 (dashboard) and 8000 (API) in the instance's security
+   group.
+3. On the instance, create `~/TruCart/.env.local` with real secrets (Supabase,
+   Groq, a real `SESSION_SECRET`), plus:
+   ```
+   CORS_ALLOW_ORIGINS=http://<EC2-PUBLIC-IP>
+   ```
+4. Pull and run:
+   ```bash
+   cd TruCart
+   docker compose -f docker-compose.prod.yml --env-file .env.local pull
+   docker compose -f docker-compose.prod.yml --env-file .env.local up -d
+   ```
+5. Visit `http://<EC2-PUBLIC-IP>` (dashboard) and `http://<EC2-PUBLIC-IP>:8000/docs`
+   (API).
+
+**Notes**
+- `OLLAMA_BASE_URL`/`OLLAMA_MODEL`/`OLLAMA_API_KEY` can point at any
+  OpenAI-compatible endpoint (e.g. Groq: `OLLAMA_BASE_URL=https://api.groq.com/openai`,
+  `OLLAMA_API_KEY=<groq key>`, `OLLAMA_MODEL=llama-3.3-70b-versatile`) — the demo
+  doesn't run Ollama locally since a t2.micro can't fit a 7B model in 1 GB RAM.
+- The session cookie is only marked `Secure` when the request actually arrived
+  over HTTPS (checked via `x-forwarded-proto`), so login works over plain HTTP
+  on an EC2 instance without a TLS-terminating proxy in front.
+- To ship a code change: rebuild + push the image(s) locally
+  (`docker build -f apps/web/Dockerfile -t bhautik2004/trucart-web:latest --build-arg NEXT_PUBLIC_API_URL=http://backend:8000 --build-arg SESSION_SECRET=<placeholder> .`,
+  then `docker push`), then on the instance re-run step 4's `pull && up -d` —
+  no rebuild needed on the instance itself.
+- Free-tier safety: stick to one instance (750 hrs/month covers 24/7 use for a
+  year), and don't allocate an Elastic IP unless it stays attached to a running
+  instance (an idle/unattached EIP is billed).
+
+---
+
 ## Repo layout
 ```
 apps/web/          Next.js dashboard
@@ -170,6 +236,9 @@ backend/
   agents/            one module per agent + orchestrator.py + base.py
   scheduler.py       APScheduler orchestrator loop (SCHEDULER_ENABLED)
 database/migrations/  numbered schema + seed SQL (001–016)
+deploy/ec2-bootstrap.sh  EC2 user-data script (installs Docker, clones repo)
+docker-compose.yml       local dev: builds both images from source
+docker-compose.prod.yml  deployment: pulls prebuilt images from Docker Hub
 docs/                architecture, cost, API, deployment
 packages/ui/         shared shadcn component library
 ```
