@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+import os
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -44,9 +45,16 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="TruCart API", version="0.0.1", lifespan=lifespan)
 
+_cors_origins_env = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+_cors_origins = (
+    [origin.strip() for origin in _cors_origins_env.split(",") if origin.strip()]
+    if _cors_origins_env
+    else ["http://localhost:3000"]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -133,7 +141,7 @@ def login(body: LoginRequest, request: Request):
         .maybe_single()
         .execute()
     )
-    user = result.data
+    user = result.data if result is not None else None
     if not user or not verify_password(body.password, user.get("password_hash") or ""):
         _login_attempts[throttle_key].append(time.time())
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -165,7 +173,7 @@ def change_password(body: ChangePasswordRequest):
         .maybe_single()
         .execute()
     )
-    user = result.data
+    user = result.data if result is not None else None
     if not user or not verify_password(body.current_password, user.get("password_hash") or ""):
         raise HTTPException(status_code=401, detail="Current password is incorrect.")
     if not user.get("is_active", True):

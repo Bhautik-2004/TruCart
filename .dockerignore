@@ -1,0 +1,14 @@
+**/node_modules
+**/.next
+**/__pycache__
+**/*.pyc
+.git
+.env
+.env.local
+.env.*.local
+backend/.env.local
+apps/web/.env.local
+*.md
+docs
+database
+.turbo

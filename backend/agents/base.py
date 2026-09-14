@@ -84,7 +84,8 @@ def get_ollama_client() -> Any:
             import openai as _openai_module
 
             _ollama_client_traced = False
-        _ollama_client = _openai_module.OpenAI(base_url=f"{base_url}/v1", api_key="ollama")
+        api_key = os.getenv("OLLAMA_API_KEY", "ollama")
+        _ollama_client = _openai_module.OpenAI(base_url=f"{base_url}/v1", api_key=api_key)
     return _ollama_client
 
 
@@ -217,7 +218,7 @@ def get_store_config(key: str, default: Any = None) -> Any:
         .maybe_single()
         .execute()
     )
-    if not result.data:
+    if result is None or not result.data:
         return default
     return result.data["config_value"]
 

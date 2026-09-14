@@ -1,0 +1,29 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env.local
+    environment:
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Server-side only (no browser code reads this var) — must resolve
+        # via Docker's internal network, not the host's localhost/public IP.
+        - NEXT_PUBLIC_API_URL=http://backend:8000
+        - SESSION_SECRET=${SESSION_SECRET}
+    env_file:
+      - .env.local
+    ports:
+      - "80:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
