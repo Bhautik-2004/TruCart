@@ -98,10 +98,18 @@ def run_inventory_agent(correlation_id=None) -> dict[str, Any]:
         .select("inventory_id, product_id, quantity_on_hand, quantity_reserved, reorder_point, reorder_quantity")
         .execute()
     )
+    # Restocking a discontinued product makes no sense — and a discontinued
+    # product's inventory row may carry reorder_quantity=0, which would violate
+    # purchase_orders' quantity>0 check if it were ever treated as a candidate.
+    active_product_ids = {
+        p["product_id"]
+        for p in (supabase.table("products").select("product_id").eq("status", "active").execute().data or [])
+    }
     low_stock = [
         row
         for row in (inventory_result.data or [])
-        if (row["quantity_on_hand"] - row["quantity_reserved"]) <= row["reorder_point"]
+        if row["product_id"] in active_product_ids
+        and (row["quantity_on_hand"] - row["quantity_reserved"]) <= row["reorder_point"]
     ]
     low_stock.sort(key=lambda r: r["reorder_point"] - (r["quantity_on_hand"] - r["quantity_reserved"]), reverse=True)
 
