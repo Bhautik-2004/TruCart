@@ -1,9 +1,19 @@
 # TruCart backend dependencies (pinned to a compatible-release range)
 fastapi~=0.115.6
 uvicorn[standard]~=0.34.0
-supabase~=2.29.0
+# supabase~=2.29.0 resolves to a postgrest-py without SyncSelectRequestBuilder.or_(),
+# which backend/agents/logistics.py depends on -- confirmed broken against a live
+# DB. >=2.10 ships a postgrest-py with .or_() support.
+supabase>=2.10,<3
 python-dotenv~=1.0.1
-openai~=1.12
+# openai~=1.12 (i.e. <1.13) predates the openai-python fix for httpx>=0.28 dropping
+# the `proxies` kwarg -- every LLM call raises "Client.__init__() got an unexpected
+# keyword argument 'proxies'" against a modern httpx. >=1.55 is the first fixed line.
+openai>=1.55,<2
 bcrypt~=4.0
 langfuse>=4,<5
 apscheduler~=3.11
+# Transitive pin: supabase's realtime client needs the websockets.asyncio module
+# (added in websockets 13) but rejects >=16; keep it in that window explicitly so a
+# resolver doesn't wander outside it via some other dependency.
+websockets>=13,<16

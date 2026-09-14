@@ -1,21 +1,26 @@
-﻿-- ============================================================================
+-- ============================================================================
 -- TruCart database seed injector
 --
--- Generates 1,000 rows per table (except users: 1 row) for every table defined in
--- database/migrations/001-005, preserving all foreign-key relationships.
+-- A small, richly-related demo dataset for a fictional Indian electronics
+-- retailer (TechBazaar): ~45-50 rows in each core entity table (customers,
+-- products, orders, inventory, purchase orders, support tickets), with real
+-- foreign-key relationships and deliberately engineered signals so every
+-- backend agent has real, varied work to do on its very first run.
 --
 -- Usage:
---   1. Apply migrations 001 -> 006 first.
---   2. Run this file in the Supabase SQL Editor (or `psql -f data_inject.sql`).
+--   1. Apply migrations 001 -> 005 first.
+--   2. Run this file's siblings (01 -> 22) in the Supabase SQL Editor, in order.
+--   3. Apply migrations 006 -> 016.
 --
--- Idempotent: every statement uses ON CONFLICT ... DO NOTHING, so the file can
--- be re-run safely. Seed rows already inserted by migration 005 are included
--- verbatim (byte-for-byte identical) so the total per table is exactly 1,000.
+-- Idempotent: every statement uses ON CONFLICT ... DO NOTHING (or DO UPDATE for
+-- config tables), so the file can be re-run safely.
 --
 -- Notes:
 --   * auth_user_id is left NULL (Supabase Auth linkage not part of seed data).
 --   * GENERATED ALWAYS columns are never written:
 --       inventory.quantity_available, order_items.total_price, purchase_orders.total_cost
 --   * knowledge_base.embedding is left NULL (an embedding model fills it at runtime).
---   * Deterministic fixed UUIDs keep cross-references stable across runs.
+--   * Deterministic fixed UUIDs keep cross-references stable across re-runs.
+--   * 19_agent_task_log.sql and 20_agent_config.sql are intentionally near-empty —
+--     see the comments in each file for why.
 -- ============================================================================
