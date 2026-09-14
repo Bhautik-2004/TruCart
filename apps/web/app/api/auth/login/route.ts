@@ -27,12 +27,14 @@ export async function POST(request: Request) {
 
   const token = await signSession(data.user)
   const jar = await cookies()
+  const isHttps =
+    request.headers.get("x-forwarded-proto") === "https" || new URL(request.url).protocol === "https:"
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE,
-    secure: process.env.NODE_ENV === "production",
+    secure: isHttps,
   })
 
   return NextResponse.json({ user: data.user })
