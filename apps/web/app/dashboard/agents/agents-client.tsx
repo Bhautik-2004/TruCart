@@ -9,7 +9,7 @@ import { Bot, Settings, Activity, Zap, Clock, CheckCircle, AlertCircle, Play, Lo
 import { DetailSheet } from "../components/detail-sheet"
 import { updateAgentConfig } from "../actions"
 
-interface TaskLog { log_id: string; task_type: string; status: string; model_used: string | null; tokens_used: number | null; created_at: string; agent_name: string }
+interface TaskLog { log_id: string; task_type: string; status: string; model_used: string | null; tokens_used: number | null; created_at: string; agent_name: string; output_data: Record<string, unknown> | null }
 interface AgentConfigRow { agent_name: string; config_key: string; config_value: unknown }
 interface SchedulerStatus { enabled: boolean; running: boolean; interval_minutes: number; last_cycle_at: string | null; last_cycle_status: string | null }
 type TrustByAgent = Record<string, { trust_score: number; win_rate: number; verified: number }>
@@ -26,6 +26,23 @@ const descriptionMap: Record<string, string> = { inventory_agent: "Monitors stoc
 
 function configValueToInput(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value)
+}
+
+function LogOutput({ log }: { log: TaskLog }) {
+  const summary = `${log.status} — ${log.model_used || "N/A"} (${log.tokens_used || 0} tokens) — ${new Date(log.created_at).toLocaleTimeString()}`
+  const hasOutput = log.output_data && Object.keys(log.output_data).length > 0
+  return (
+    <div className="space-y-1">
+      <p>{summary}</p>
+      {hasOutput ? (
+        <pre className="whitespace-pre-wrap break-words rounded bg-muted p-2 text-xs">
+          {JSON.stringify(log.output_data, null, 2)}
+        </pre>
+      ) : (
+        <p className="text-xs italic text-muted-foreground">No output recorded for this run.</p>
+      )}
+    </div>
+  )
 }
 
 export default function AgentsClient({ taskLogs, agentConfig, scheduler, trustByAgent, llm }: { taskLogs: TaskLog[]; agentConfig: AgentConfigRow[]; scheduler: SchedulerStatus | null; trustByAgent: TrustByAgent; llm: LlmStatus | null }) {
@@ -271,7 +288,7 @@ export default function AgentsClient({ taskLogs, agentConfig, scheduler, trustBy
             { label: "Completed", value: `${selectedAgent.stats.completed}` },
             { label: "Errors", value: `${selectedAgent.stats.errors}` },
             { label: "Accuracy", value: `${selectedAgent.stats.accuracy.toFixed(1)}%` },
-            ...selectedAgent.logs.slice(0, 5).map(log => ({ label: log.task_type || "Task", value: `${log.status} — ${log.model_used || "N/A"} (${log.tokens_used || 0} tokens) — ${new Date(log.created_at).toLocaleTimeString()}` })),
+            ...selectedAgent.logs.slice(0, 5).map(log => ({ key: log.log_id, label: log.task_type || "Task", value: <LogOutput log={log} /> })),
           ] : [
             { label: "Tasks Today", value: `${selectedAgent.stats.total}` },
             { label: "Completion Rate", value: `${selectedAgent.stats.accuracy.toFixed(1)}%` },

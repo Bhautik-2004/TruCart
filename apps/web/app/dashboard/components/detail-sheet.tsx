@@ -14,6 +14,7 @@ interface DetailField {
   label: string
   value: string | React.ReactNode
   className?: string
+  key?: string
 }
 
 interface DetailSheetProps {
@@ -48,7 +49,7 @@ export function DetailSheet({
         <div className="flex-1 overflow-y-auto px-4">
           <div className="space-y-4">
             {fields.map((field) => (
-              <div key={field.label} className={field.className}>
+              <div key={field.key ?? field.label} className={field.className}>
                 <p className="text-sm font-medium text-muted-foreground">
                   {field.label}
                 </p>

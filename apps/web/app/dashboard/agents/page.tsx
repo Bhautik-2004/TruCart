@@ -10,7 +10,7 @@ export default async function AgentsPage() {
   const [{ data: taskLogs }, { data: agentConfig }] = await Promise.all([
     supabase
       .from("agent_task_log")
-      .select("agent_name, status, created_at, log_id, task_type, model_used, tokens_used")
+      .select("agent_name, status, created_at, log_id, task_type, model_used, tokens_used, output_data")
       .gte("created_at", today),
     supabase
       .from("agent_config")
