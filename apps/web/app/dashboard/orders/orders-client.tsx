@@ -35,6 +35,24 @@ interface Order {
   placed_at: string
   customers?: { full_name: string }
   items_count?: number
+  risk_score?: number | null
+  risk_level?: string | null
+  risk_reasons?: string[] | null
+}
+
+const RISK_STYLES: Record<string, string> = {
+  high: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+  medium: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
+  low: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
+}
+
+function RiskBadge({ level, score }: { level?: string | null; score?: number | null }) {
+  if (!level) return <span className="text-xs text-muted-foreground">—</span>
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${RISK_STYLES[level] || RISK_STYLES.low}`}>
+      {level}{typeof score === "number" ? ` (${score.toFixed(2)})` : ""}
+    </span>
+  )
 }
 
 export default function OrdersClient({ orders }: { orders: Order[] }) {
@@ -191,13 +209,14 @@ export default function OrdersClient({ orders }: { orders: Order[] }) {
                   <th className="pb-2 text-left font-medium text-muted-foreground">Items</th>
                   <th className="pb-2 text-left font-medium text-muted-foreground">Total</th>
                   <th className="pb-2 text-left font-medium text-muted-foreground">Status</th>
+                  <th className="pb-2 text-left font-medium text-muted-foreground">Risk</th>
                   <th className="pb-2 text-left font-medium text-muted-foreground">Date</th>
                   <th className="pb-2 text-right font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">No orders found</td></tr>
+                  <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No orders found</td></tr>
                 ) : filtered.map(order => (
                   <tr key={order.order_id} className="border-b last:border-0">
                     <td className="py-3 font-medium">{order.order_number}</td>
@@ -209,6 +228,7 @@ export default function OrdersClient({ orders }: { orders: Order[] }) {
                         {order.status}
                       </span>
                     </td>
+                    <td className="py-3"><RiskBadge level={order.risk_level} score={order.risk_score} /></td>
                     <td className="py-3 text-muted-foreground">{new Date(order.placed_at).toLocaleDateString()}</td>
                     <td className="py-3 text-right">
                       <Button variant="ghost" size="sm" onClick={() => { setSelectedOrder(order); setSheetOpen(true) }}>
@@ -235,6 +255,8 @@ export default function OrdersClient({ orders }: { orders: Order[] }) {
           { label: "Total", value: `₹${Number(selectedOrder.total_amount).toFixed(2)}` },
           { label: "Date", value: new Date(selectedOrder.placed_at).toLocaleString() },
           { label: "Payment", value: selectedOrder.payment_method || "N/A" },
+          { label: "Risk", value: <RiskBadge level={selectedOrder.risk_level} score={selectedOrder.risk_score} /> },
+          ...(selectedOrder.risk_reasons?.length ? [{ label: "Risk reasons", value: selectedOrder.risk_reasons.join(" ") }] : []),
         ] : []}
         actions={selectedOrder ? [
           { label: "Mark Shipped", onClick: () => { handleStatusUpdate(selectedOrder.order_id, "shipped"); setSheetOpen(false) } },

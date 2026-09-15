@@ -150,6 +150,11 @@ def call_llm_json(
             ],
             response_format={"type": "json_object"},
             temperature=0.2,
+            # Capped well under Groq's free-tier output-tokens-per-minute limit
+            # (1000 OTPM as of writing) — an unset max_tokens lets the client
+            # default to the model's full completion length, which alone
+            # exceeds that limit and makes every call fail with a 429.
+            max_tokens=int(os.getenv("OLLAMA_MAX_TOKENS", "600")),
             **extra,
         )
         content = response.choices[0].message.content

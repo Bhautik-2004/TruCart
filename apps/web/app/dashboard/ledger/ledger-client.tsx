@@ -4,7 +4,7 @@ import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@workspace/ui/components/card"
 import { Button } from "@workspace/ui/components/button"
-import { Gauge, TrendingUp, RefreshCw, Loader2 } from "lucide-react"
+import { Gauge, TrendingUp, RefreshCw, Loader2, Sparkles } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
 
 interface AgentCard {
@@ -51,6 +51,20 @@ export default function LedgerClient({ summary, actions, backendDown }: { summar
   const [gradeFilter, setGradeFilter] = useState("all")
   const [selected, setSelected] = useState<Action | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [explanations, setExplanations] = useState<Record<string, string>>({})
+  const [explaining, setExplaining] = useState<string | null>(null)
+
+  async function handleExplain(actionId: string) {
+    setExplaining(actionId)
+    try {
+      const res = await fetch(`/api/ai-tools/explain/ledger/${actionId}`, { method: "POST" })
+      const data = await res.json()
+      setExplanations(e => ({ ...e, [actionId]: data.explanation || "No explanation available." }))
+    } catch {
+      setExplanations(e => ({ ...e, [actionId]: "Failed to generate an explanation." }))
+    }
+    setExplaining(null)
+  }
 
   async function runVerify() {
     setVerifying(true)
@@ -224,8 +238,17 @@ export default function LedgerClient({ summary, actions, backendDown }: { summar
           { label: "Decision", value: JSON.stringify(selected.decision ?? {}) },
           { label: "Outcome", value: JSON.stringify(selected.outcome ?? {}) },
           { label: "Verify after", value: new Date(selected.verify_after).toLocaleString() },
+          ...(selected && explanations[selected.action_id] ? [{ label: "AI explanation", value: explanations[selected.action_id] }] : []),
         ] : []}
-        actions={[{ label: "Close", variant: "outline" as const, onClick: () => setSheetOpen(false) }]}
+        actions={selected ? [
+          {
+            label: explaining === selected.action_id ? "Explaining…" : "Explain",
+            variant: "outline" as const,
+            icon: explaining === selected.action_id ? <Loader2 className="mr-1 size-3 animate-spin" /> : <Sparkles className="mr-1 size-3" />,
+            onClick: () => handleExplain(selected.action_id),
+          },
+          { label: "Close", variant: "outline" as const, onClick: () => setSheetOpen(false) },
+        ] : []}
       />
     </div>
   )

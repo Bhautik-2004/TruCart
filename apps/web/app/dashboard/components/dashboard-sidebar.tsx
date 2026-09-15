@@ -27,7 +27,11 @@ import {
   Bot,
   ListMinus,
   Logs,
-  Gauge
+  Gauge,
+  Sparkles,
+  ScanLine,
+  Plug,
+  Users
 } from "lucide-react"
 import { LogoutButton } from "./logout-button"
 
@@ -45,10 +49,14 @@ const navItems = [
       { title: "Orders", url: "/dashboard/orders", icon: ShoppingCart },
       { title: "Inventory", url: "/dashboard/inventory", icon: ShelvingUnit },
       { title: "Support", url: "/dashboard/support", icon: Info },
+      { title: "CRM", url: "/dashboard/crm", icon: Users },
       { title: "Pricing", url: "/dashboard/pricing", icon:  DollarSign },
       { title: "Marketing", url: "/dashboard/marketing", icon: Ad },
       { title: "Logistics", url: "/dashboard/logistics", icon: Forklift },
+      { title: "Barcode / Tracking", url: "/dashboard/scanner", icon: ScanLine },
       { title: "Agents", url: "/dashboard/agents", icon: Bot },
+      { title: "AI Enhancements", url: "/dashboard/ai-tools", icon: Sparkles },
+      { title: "Integrations", url: "/dashboard/integrations", icon: Plug },
       { title: "Autopilot Ledger", url: "/dashboard/ledger", icon: Gauge },
       { title: "Audit Logs", url: "/dashboard/audits", icon: Logs },
 

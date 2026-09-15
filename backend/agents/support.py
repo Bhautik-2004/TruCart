@@ -18,6 +18,7 @@ from .rag import format_context, retrieve
 
 AGENT_NAME = "support_agent"
 _PRIORITY_RANK = {"high": 0, "medium": 1, "normal": 2, "low": 3}
+_VALID_SENTIMENTS = {"positive", "neutral", "negative"}
 
 
 def run_support_agent(correlation_id=None) -> dict[str, Any]:
@@ -277,3 +278,97 @@ def run_support_agent(correlation_id=None) -> dict[str, Any]:
         "correlation_id": str(correlation_id),
         "summary": {"scanned": len(tickets), "auto_executed": auto_executed, "escalated": escalated},
     }
+
+
+def analyze_ticket_sentiment(ticket_id: str) -> dict[str, Any]:
+    """Score one ticket's customer sentiment with the LLM and persist it onto
+    the row. Falls back to a neutral/unscored result (rather than raising) if
+    the ticket is missing or the model call fails, so a bulk sweep can keep
+    going past one bad ticket."""
+    supabase = get_supabase()
+    rows = (
+        supabase.table("support_tickets")
+        .select("ticket_id, subject, description, category, priority")
+        .eq("ticket_id", ticket_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        return {"ticket_id": ticket_id, "sentiment_label": None, "sentiment_score": None, "error": "ticket not found"}
+
+    ticket = rows[0]
+    correlation_id = new_correlation_id()
+    llm_result = call_llm_json(
+        system_prompt=(
+            "You are a customer sentiment analysis assistant for an e-commerce support desk. "
+            "Read the ticket and judge how the customer feels. Return JSON: "
+            '{"sentiment": "positive" | "neutral" | "negative", '
+            '"sentiment_score": -1.0 to 1.0 (negative = unhappy, positive = happy), '
+            '"summary": "one sentence describing the customer\'s tone and urgency"}.'
+        ),
+        user_prompt=str({
+            "subject": ticket["subject"],
+            "description": ticket["description"],
+            "category": ticket["category"],
+            "priority": ticket["priority"],
+        }),
+        agent_name=AGENT_NAME,
+        correlation_id=correlation_id,
+        call_name="analyze-ticket-sentiment",
+        trace_metadata={"ticket_id": ticket_id},
+    )
+
+    if llm_result is None:
+        sentiment, score, summary = "neutral", 0.0, "Unable to analyze sentiment (LLM unavailable)."
+    else:
+        sentiment = str(llm_result.get("sentiment") or "neutral").lower()
+        if sentiment not in _VALID_SENTIMENTS:
+            sentiment = "neutral"
+        try:
+            score = max(-1.0, min(1.0, float(llm_result.get("sentiment_score") or 0)))
+        except (TypeError, ValueError):
+            score = 0.0
+        summary = llm_result.get("summary") or ""
+
+    analyzed_at = datetime.now(timezone.utc).isoformat()
+    supabase.table("support_tickets").update({
+        "sentiment_label": sentiment,
+        "sentiment_score": score,
+        "sentiment_summary": summary,
+        "sentiment_analyzed_at": analyzed_at,
+    }).eq("ticket_id", ticket_id).execute()
+
+    return {
+        "ticket_id": ticket_id,
+        "sentiment_label": sentiment,
+        "sentiment_score": score,
+        "sentiment_summary": summary,
+        "sentiment_analyzed_at": analyzed_at,
+    }
+
+
+def bulk_sentiment_analysis(limit: int = 20) -> dict[str, Any]:
+    """Analyze sentiment for the most recent tickets that have not been
+    scored yet. Returns per-ticket results plus a breakdown count."""
+    supabase = get_supabase()
+    tickets = (
+        supabase.table("support_tickets")
+        .select("ticket_id")
+        .is_("sentiment_analyzed_at", "null")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+        or []
+    )
+
+    results = [analyze_ticket_sentiment(t["ticket_id"]) for t in tickets]
+    breakdown = {"positive": 0, "neutral": 0, "negative": 0}
+    for r in results:
+        label = r.get("sentiment_label")
+        if label in breakdown:
+            breakdown[label] += 1
+
+    return {"analyzed": len(results), "breakdown": breakdown, "results": results}

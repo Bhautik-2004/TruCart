@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@workspace/ui/components/card"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
-import { Clock, CheckCircle, XCircle, ArrowRight, Gauge } from "lucide-react"
+import { Clock, CheckCircle, XCircle, ArrowRight, Gauge, Sparkles, Loader2 } from "lucide-react"
 import { DetailSheet } from "../components/detail-sheet"
 import { updateReviewStatus } from "../actions"
 
@@ -32,6 +32,20 @@ export default function ReviewClient({ items }: { items: ReviewItem[] }) {
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [standingRule, setStandingRule] = useState<Record<string, boolean>>({})
   const [toast, setToast] = useState<string | null>(null)
+  const [explanations, setExplanations] = useState<Record<string, string>>({})
+  const [explaining, setExplaining] = useState<string | null>(null)
+
+  async function handleExplain(reviewId: string) {
+    setExplaining(reviewId)
+    try {
+      const res = await fetch(`/api/ai-tools/explain/review/${reviewId}`, { method: "POST" })
+      const data = await res.json()
+      setExplanations(e => ({ ...e, [reviewId]: data.explanation || "No explanation available." }))
+    } catch {
+      setExplanations(e => ({ ...e, [reviewId]: "Failed to generate an explanation." }))
+    }
+    setExplaining(null)
+  }
 
   const pendingItems = items.filter(i => i.status === "pending")
   const isToday = (d: string | null) => !!d && new Date(d).toDateString() === new Date().toDateString()
@@ -137,6 +151,12 @@ export default function ReviewClient({ items }: { items: ReviewItem[] }) {
                 </>
               )}
               <p className="text-xs text-muted-foreground">Submitted by: {item.agent_name}</p>
+              {explanations[item.review_id] && (
+                <p className="rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed">
+                  <span className="font-medium text-foreground">AI explanation: </span>
+                  {explanations[item.review_id]}
+                </p>
+              )}
               <Input
                 placeholder="Reviewer note (optional)"
                 className="h-8 text-xs"
@@ -157,6 +177,10 @@ export default function ReviewClient({ items }: { items: ReviewItem[] }) {
             <CardFooter className="flex gap-2">
               <Button size="sm" onClick={() => handleApprove(item.review_id)} disabled={actingId === item.review_id}><CheckCircle className="mr-1 size-3" />{actingId === item.review_id ? "..." : (isAutonomy ? "Apply" : "Approve")}</Button>
               <Button size="sm" variant="destructive" onClick={() => handleReject(item.review_id)} disabled={actingId === item.review_id}><XCircle className="mr-1 size-3" />{actingId === item.review_id ? "..." : "Reject"}</Button>
+              <Button size="sm" variant="ghost" onClick={() => handleExplain(item.review_id)} disabled={explaining === item.review_id}>
+                {explaining === item.review_id ? <Loader2 className="mr-1 size-3 animate-spin" /> : <Sparkles className="mr-1 size-3" />}
+                Explain
+              </Button>
               <Button size="sm" variant="outline" className="ml-auto" onClick={() => { setSelectedItem(item); setSheetOpen(true) }}>Details<ArrowRight className="ml-1 size-3" /></Button>
             </CardFooter>
           </Card>

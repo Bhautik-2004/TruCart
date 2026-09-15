@@ -10,8 +10,10 @@ from .base import (
     new_correlation_id,
     notify,
 )
+from .risk import assess_order_risk
 
 AGENT_NAME = "order_agent"
+_HIGH_RISK_LEVEL = "high"
 
 
 def run_order_agent(correlation_id=None) -> dict[str, Any]:
@@ -22,7 +24,7 @@ def run_order_agent(correlation_id=None) -> dict[str, Any]:
 
     orders_result = (
         supabase.table("orders")
-        .select("order_id, order_number, customer_id, payment_status")
+        .select("order_id, order_number, customer_id, payment_status, payment_method, total_amount")
         .eq("status", "pending")
         .order("placed_at")
         .limit(max_items)
@@ -84,11 +86,29 @@ def run_order_agent(correlation_id=None) -> dict[str, Any]:
     for row in inventory_result.data or []:
         inventory_by_product[row["product_id"]].append(row)
 
+    customer_ids = list({o["customer_id"] for o in orders})
+    customers_result = (
+        supabase.table("customers")
+        .select("customer_id, total_orders, lifetime_value")
+        .in_("customer_id", customer_ids)
+        .execute()
+    )
+    customers_by_id = {c["customer_id"]: c for c in (customers_result.data or [])}
+
     auto_executed = 0
     escalated = 0
     outcomes = []
 
     for order in orders:
+        customer = customers_by_id.get(order["customer_id"], {})
+        risk = assess_order_risk(order, customer, supabase=supabase)
+        supabase.table("orders").update({
+            "risk_score": risk["score"],
+            "risk_level": risk["level"],
+            "risk_reasons": risk["reasons"],
+            "risk_assessed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("order_id", order["order_id"]).execute()
+
         order_items = items_by_order.get(order["order_id"], [])
         if order["payment_status"] != "paid" or not order_items:
             reason = "payment not confirmed" if order["payment_status"] != "paid" else "no line items found"
@@ -120,6 +140,25 @@ def run_order_agent(correlation_id=None) -> dict[str, Any]:
                 payload={"source": AGENT_NAME, "item_type": "order", "order_id": order["order_id"], "shortage_product_ids": shortages},
             )
             outcomes.append({"order_id": order["order_id"], "action": "escalated", "reason": "insufficient_stock"})
+            continue
+
+        if risk["level"] == _HIGH_RISK_LEVEL:
+            escalated += 1
+            enqueue_review(
+                item_type="order",
+                reference_id=order["order_id"],
+                agent_name=AGENT_NAME,
+                summary=f"Order {order['order_number']} flagged high risk (score {risk['score']:.2f}) — needs manual confirmation.",
+                payload={
+                    "source": AGENT_NAME,
+                    "item_type": "order",
+                    "order_id": order["order_id"],
+                    "reason": "high_risk",
+                    "risk_score": risk["score"],
+                    "risk_reasons": risk["reasons"],
+                },
+            )
+            outcomes.append({"order_id": order["order_id"], "action": "escalated", "reason": "high_risk", "risk_score": risk["score"]})
             continue
 
         # Atomic reserve-all-then-confirm. If the RPC is installed, a shortage
